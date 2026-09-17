@@ -1,77 +1,89 @@
 # 智能作者创作平台
 
-面向中国网络文学个人作者的桌面写作工作台。项目采用“本地优先、写作为核心、AI 为辅助”的产品策略，先完成可靠的作品组织与正文创作体验，再逐步接入兼容 OpenAI API 格式的多模型能力。
+面向中国网络文学个人作者的桌面写作工作台。项目采用“本地优先、写作为核心、AI 为辅助”的产品策略，支持作品组织、正文创作、资料管理、历史版本、导出，以及兼容 OpenAI API 格式的 AI 服务。
 
-当前仓库处于 **M1：可交互原型** 阶段。
+项目当前处于后端核心能力完成、前端持续接入阶段。前后端采用严格的目录所有权规则，参与开发前请先阅读 [协作规则](./docs/COLLABORATION_RULES.md)。
 
-## 当前可用
+## 当前能力
 
-- 桌面端三栏写作工作台
-- 作品卷章目录与章节切换
-- 可编辑章节标题与富文本正文
-- 加粗、斜体、标题、引用、列表、撤销和重做
-- 650ms 防抖自动保存到浏览器 `localStorage`
-- 本章、全书字数与每日目标进度
-- 新建章节
-- AI 续写、润色、情节推演的交互预览
-- OpenAI 兼容接口地址、模型名称和 API Key 的手动配置界面
-- 角色、线索、时间与地点的章节信息预览
+- 作品、分卷、章节的创建、编辑、归档、移动和排序
+- 富文本正文存储、字数统计、写作目标与连续创作统计
+- 自动版本快照、手动版本、版本预览与安全恢复
+- 大纲、角色卡、世界观、时间线和章节关联资料
+- 全文与资料搜索
+- TXT、DOCX、PDF 网文格式导出
+- OpenAI-compatible AI 续写、润色、大纲生成、头脑风暴与一致性检查
+- AI 地址安全校验、API Key 本地加密、调用限流和用量统计
+- Cloudflare D1 本地数据库与可追踪迁移
 
-> AI 结果目前是界面演示数据，不会向外部服务发送作品内容。真实模型调用会在服务端代理完成后启用，以避免 API Key 暴露在前端。
+AI 只接收用户明确提交的指令和上下文，不会默认读取或上传整部作品。API Key 只由服务端读取并使用本地密钥加密保存。
+
+## 快速启动（Windows）
+
+建议安装 Node.js 22 或更高版本，然后双击仓库根目录中的 `start-dev.bat`。
+
+启动器会依次：
+
+1. 检查并按需安装依赖；
+2. 创建仅供本机使用的 AI 配置加密密钥；
+3. 构建项目并准备 Cloudflare 本地配置；
+4. 自动应用尚未执行的 D1 数据库迁移；
+5. 启动开发服务器。
+
+终端会显示实际访问地址，当前通常为 `http://localhost:5173`。按 `Ctrl+C` 停止服务。
+
+也可以从 PowerShell 启动：
+
+```powershell
+.\scripts\start-dev.ps1
+```
+
+已有依赖或构建结果时可以使用：
+
+```powershell
+.\scripts\start-dev.ps1 -SkipInstall -SkipBuild
+```
+
+本地数据保存在 `.wrangler/`，AI 配置加密密钥保存在 `.dev.vars`。两者均被 Git 忽略，不应上传到仓库。
+
+## 常用命令
+
+```bash
+npm run dev
+npm run build
+npm run db:generate
+```
+
+后端测试使用 Node.js 内置测试运行器：
+
+```bash
+node --import tsx --test tests/backend/text.test.ts tests/backend/ai-security.test.ts tests/backend/exports.test.ts
+```
 
 ## 技术方案
 
-- Next.js 16 + React 19 + TypeScript
-- Tailwind CSS 4
-- shadcn/ui 交互组件
-- Lucide 图标
-- 浏览器本地存储（Demo 阶段）
-- 后续编辑器计划升级为 TipTap
-- 后续服务端统一封装 OpenAI-compatible API
+- Next.js 16、React 19、TypeScript
+- Tailwind CSS 4 与 shadcn/ui
+- Drizzle ORM 与 Cloudflare D1
+- Zod API 输入校验
+- 服务端 OpenAI-compatible 模型代理
+- Node.js Test Runner 与 PowerShell API 冒烟测试
 
-## 本地运行
+## 项目边界
 
-建议使用 Node.js 22 或更高版本。
-
-```bash
-npm install
-npm run dev
-```
-
-终端会打印本地访问地址，通常为 `http://localhost:3000`。
-
-生产构建：
-
-```bash
-npm run build
-```
-
-## 产品边界
-
-- 第一阶段只服务个人作者
-- 第一阶段只面向中文网文
-- 第一版只重点支持桌面浏览器
-- Demo 数据只保存在当前浏览器
-- 暂不实现多人协作、权限管理、社区和付费
-- 登录、云同步与跨设备能力保留在后续阶段
-
-## 数据与隐私原则
-
-1. 默认只发送用户明确选择的章节、大纲和指令，不默认上传整部作品。
-2. API Key 不提交到 Git，也不在正式版本中由浏览器直接请求模型服务。
-3. AI 操作前展示本次参考范围，用户可以调整。
-4. 历史版本、导出文件和本地草稿均归用户所有。
+- 第一阶段只服务个人作者和中文网文
+- 第一版重点支持桌面浏览器
+- Demo 使用本地数据库，不提供云同步或多人协作
+- 登录、云端同步、权限体系、社区和付费能力留待后续阶段
 
 ## 文档
 
 - [项目里程碑](./MILESTONES.md)
+- [后端阶段规划](./docs/BACKEND_ROADMAP.md)
+- [API 契约](./docs/API_CONTRACTS.md)
 - [前后端协作与代码所有权规则](./docs/COLLABORATION_RULES.md)
 - [AI 助手仓库规则](./AGENTS.md)
 
 ## GitHub
 
-计划同步到：<https://github.com/Asami233/smart-author-creation-platform-.git>
-
-## 项目状态
-
-当前实现用于确认布局、核心写作流程和视觉方向。下一阶段会把原型升级为稳定的数据结构与正式富文本编辑器，并补齐历史版本、导出和 AI 服务端代理。
+<https://github.com/Asami233/smart-author-creation-platform-.git>
