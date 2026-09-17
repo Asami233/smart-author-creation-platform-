@@ -65,6 +65,8 @@ npm run build
 ## 文档
 
 - [项目里程碑](./MILESTONES.md)
+- [前后端协作与代码所有权规则](./docs/COLLABORATION_RULES.md)
+- [AI 助手仓库规则](./AGENTS.md)
 
 ## GitHub
 
