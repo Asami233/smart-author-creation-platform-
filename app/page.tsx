@@ -43,6 +43,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { UserMenu } from "@/components/auth/user-menu";
 
 type Chapter = {
   id: string;
@@ -300,7 +301,7 @@ export default function Home() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
-          <div className="avatar" aria-label="当前用户">砚</div>
+          <UserMenu />
         </div>
       </header>
 

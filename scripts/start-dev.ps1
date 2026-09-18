@@ -1,4 +1,4 @@
-param(
+﻿param(
     [switch]$SkipInstall,
     [switch]$SkipBuild
 )
@@ -55,7 +55,8 @@ try {
     $devVarsPath = Join-Path $projectRoot '.dev.vars'
     if (-not (Test-Path -LiteralPath $devVarsPath)) {
         $randomBytes = New-Object byte[] 32
-        [System.Security.Cryptography.RandomNumberGenerator]::Fill($randomBytes)
+        $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+        $rng.GetBytes($randomBytes)
         $encryptionKey = [Convert]::ToBase64String($randomBytes)
         [System.IO.File]::WriteAllText(
             $devVarsPath,
