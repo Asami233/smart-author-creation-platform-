@@ -16,7 +16,7 @@ export async function GET(request: Request, { params }: Context) {
     const chapterIds = url.searchParams.getAll("chapterId").map((id) => idSchema.parse(id));
     const file = await exportWork(
       idSchema.parse(workId),
-      ownerIdForRequest(request),
+      await ownerIdForRequest(request),
       format,
       chapterIds.length ? chapterIds : undefined,
     );

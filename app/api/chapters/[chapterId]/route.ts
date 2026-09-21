@@ -8,7 +8,7 @@ type Context = { params: Promise<{ chapterId: string }> };
 export async function GET(request: Request, { params }: Context) {
   return api(async () => {
     const { chapterId } = await params;
-    return getChapter(idSchema.parse(chapterId), ownerIdForRequest(request));
+    return getChapter(idSchema.parse(chapterId), await ownerIdForRequest(request));
   });
 }
 
@@ -16,13 +16,13 @@ export async function PATCH(request: Request, { params }: Context) {
   return api(async () => {
     const { chapterId } = await params;
     const input = await parseJson(request, updateChapterSchema);
-    return updateChapter(idSchema.parse(chapterId), ownerIdForRequest(request), input);
+    return updateChapter(idSchema.parse(chapterId), await ownerIdForRequest(request), input);
   });
 }
 
 export async function DELETE(request: Request, { params }: Context) {
   return apiEmpty(async () => {
     const { chapterId } = await params;
-    await archiveChapter(idSchema.parse(chapterId), ownerIdForRequest(request));
+    await archiveChapter(idSchema.parse(chapterId), await ownerIdForRequest(request));
   });
 }

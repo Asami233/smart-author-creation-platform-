@@ -4,5 +4,5 @@ import { ownerIdForRequest } from "@/server/identity";
 import { importBackup } from "@/server/services/data-safety";
 
 export async function POST(request: Request) {
-  return api(async () => importBackup(ownerIdForRequest(request), await readBackupJson(request)), 201);
+  return api(async () => importBackup(await ownerIdForRequest(request), await readBackupJson(request)), 201);
 }

@@ -10,7 +10,7 @@ export async function GET(request: Request, { params }: Context) {
     const { workId } = await params;
     const url = new URL(request.url);
     const includeContent = url.searchParams.get("includeContent") === "true";
-    return listChapters(idSchema.parse(workId), ownerIdForRequest(request), includeContent);
+    return listChapters(idSchema.parse(workId), await ownerIdForRequest(request), includeContent);
   });
 }
 
@@ -18,6 +18,6 @@ export async function POST(request: Request, { params }: Context) {
   return api(async () => {
     const { workId } = await params;
     const input = await parseJson(request, createChapterSchema);
-    return createChapter(idSchema.parse(workId), ownerIdForRequest(request), input);
+    return createChapter(idSchema.parse(workId), await ownerIdForRequest(request), input);
   }, 201);
 }

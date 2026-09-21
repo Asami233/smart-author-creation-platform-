@@ -4,16 +4,16 @@ import { ownerIdForRequest } from "@/server/identity";
 import { deleteAiSettings, getAiSettings, saveAiSettings } from "@/server/services/ai";
 
 export async function GET(request: Request) {
-  return api(() => getAiSettings(ownerIdForRequest(request)));
+  return api(async () => getAiSettings(await ownerIdForRequest(request)));
 }
 
 export async function PUT(request: Request) {
   return api(async () => {
     const input = await parseJson(request, updateAiSettingsSchema);
-    return saveAiSettings(ownerIdForRequest(request), input);
+    return saveAiSettings(await ownerIdForRequest(request), input);
   });
 }
 
 export async function DELETE(request: Request) {
-  return apiEmpty(() => deleteAiSettings(ownerIdForRequest(request)));
+  return apiEmpty(async () => deleteAiSettings(await ownerIdForRequest(request)));
 }

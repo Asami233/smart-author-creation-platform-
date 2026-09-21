@@ -9,7 +9,7 @@ type Context = { params: Promise<{ chapterId: string }> };
 export async function GET(request: Request, { params }: Context) {
   return api(async () => {
     const { chapterId } = await params;
-    return listChapterLinks(idSchema.parse(chapterId), ownerIdForRequest(request));
+    return listChapterLinks(idSchema.parse(chapterId), await ownerIdForRequest(request));
   });
 }
 
@@ -19,7 +19,7 @@ export async function POST(request: Request, { params }: Context) {
     const input = await parseJson(request, chapterLinkSchema);
     return addChapterLink(
       idSchema.parse(chapterId),
-      ownerIdForRequest(request),
+      await ownerIdForRequest(request),
       input.entityType,
       input.entityId,
     );
@@ -38,7 +38,7 @@ export async function DELETE(request: Request, { params }: Context) {
     const input = chapterLinkSchema.parse({ entityType, entityId });
     await removeChapterLink(
       idSchema.parse(chapterId),
-      ownerIdForRequest(request),
+      await ownerIdForRequest(request),
       input.entityType,
       input.entityId,
     );

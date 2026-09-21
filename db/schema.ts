@@ -239,3 +239,75 @@ export const aiUsageDaily = sqliteTable(
   },
   (table) => [uniqueIndex("uq_ai_usage_owner_date").on(table.ownerId, table.usageDate)],
 );
+
+export const authUsers = sqliteTable(
+  "auth_users",
+  {
+    id: text("id").primaryKey(),
+    email: text("email").notNull(),
+    emailVerifiedAt: text("email_verified_at").notNull(),
+    penName: text("pen_name").notNull(),
+    bio: text("bio").notNull().default(""),
+    avatarUrl: text("avatar_url"),
+    status: text("status").notNull().default("active"),
+    failedLoginCount: integer("failed_login_count").notNull().default(0),
+    lockedUntil: text("locked_until"),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("uq_auth_users_email").on(table.email),
+    index("idx_auth_users_status").on(table.status),
+  ],
+);
+
+export const authCredentials = sqliteTable("auth_credentials", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => authUsers.id, { onDelete: "cascade" }),
+  passwordHash: text("password_hash").notNull(),
+  passwordSalt: text("password_salt").notNull(),
+  passwordIterations: integer("password_iterations").notNull(),
+  passwordChangedAt: text("password_changed_at").notNull(),
+  ...timestamps,
+});
+
+export const authSessions = sqliteTable(
+  "auth_sessions",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => authUsers.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull(),
+    expiresAt: text("expires_at").notNull(),
+    lastSeenAt: text("last_seen_at").notNull(),
+    revokedAt: text("revoked_at"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    uniqueIndex("uq_auth_sessions_token_hash").on(table.tokenHash),
+    index("idx_auth_sessions_user_expires").on(table.userId, table.expiresAt),
+  ],
+);
+
+export const authChallenges = sqliteTable(
+  "auth_challenges",
+  {
+    id: text("id").primaryKey(),
+    email: text("email").notNull(),
+    purpose: text("purpose").notNull(),
+    codeHash: text("code_hash").notNull(),
+    payloadJson: text("payload_json").notNull().default("{}"),
+    attempts: integer("attempts").notNull().default(0),
+    expiresAt: text("expires_at").notNull(),
+    consumedAt: text("consumed_at"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("idx_auth_challenges_lookup").on(
+      table.email,
+      table.purpose,
+      table.createdAt,
+    ),
+  ],
+);

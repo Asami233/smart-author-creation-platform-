@@ -8,6 +8,6 @@ type Context = { params: Promise<{ versionId: string }> };
 export async function GET(request: Request, { params }: Context) {
   return api(async () => {
     const { versionId } = await params;
-    return getVersion(idSchema.parse(versionId), ownerIdForRequest(request));
+    return getVersion(idSchema.parse(versionId), await ownerIdForRequest(request));
   });
 }

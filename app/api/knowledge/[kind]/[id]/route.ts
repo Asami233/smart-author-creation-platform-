@@ -9,7 +9,7 @@ type Context = { params: Promise<{ kind: string; id: string }> };
 export async function GET(request: Request, { params }: Context) {
   return api(async () => {
     const { kind, id } = await params;
-    return getKnowledge(knowledgeKindSchema.parse(kind), idSchema.parse(id), ownerIdForRequest(request));
+    return getKnowledge(knowledgeKindSchema.parse(kind), idSchema.parse(id), await ownerIdForRequest(request));
   });
 }
 
@@ -25,7 +25,7 @@ export async function PATCH(request: Request, { params }: Context) {
     return updateKnowledge(
       knowledgeKindSchema.parse(kind),
       idSchema.parse(id),
-      ownerIdForRequest(request),
+      await ownerIdForRequest(request),
       payload,
     );
   });
@@ -34,6 +34,6 @@ export async function PATCH(request: Request, { params }: Context) {
 export async function DELETE(request: Request, { params }: Context) {
   return apiEmpty(async () => {
     const { kind, id } = await params;
-    await deleteKnowledge(knowledgeKindSchema.parse(kind), idSchema.parse(id), ownerIdForRequest(request));
+    await deleteKnowledge(knowledgeKindSchema.parse(kind), idSchema.parse(id), await ownerIdForRequest(request));
   });
 }

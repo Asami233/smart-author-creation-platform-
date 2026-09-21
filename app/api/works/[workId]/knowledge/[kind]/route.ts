@@ -8,7 +8,7 @@ type Context = { params: Promise<{ workId: string; kind: string }> };
 export async function GET(request: Request, { params }: Context) {
   return api(async () => {
     const { workId, kind } = await params;
-    return listKnowledge(idSchema.parse(workId), ownerIdForRequest(request), knowledgeKindSchema.parse(kind));
+    return listKnowledge(idSchema.parse(workId), await ownerIdForRequest(request), knowledgeKindSchema.parse(kind));
   });
 }
 
@@ -23,7 +23,7 @@ export async function POST(request: Request, { params }: Context) {
     }
     return createKnowledge(
       idSchema.parse(workId),
-      ownerIdForRequest(request),
+      await ownerIdForRequest(request),
       knowledgeKindSchema.parse(kind),
       payload,
     );

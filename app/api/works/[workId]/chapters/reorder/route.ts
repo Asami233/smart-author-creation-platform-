@@ -11,7 +11,7 @@ export async function POST(request: Request, { params }: Context) {
     const input = await parseJson(request, reorderChaptersSchema);
     return reorderChapters(
       idSchema.parse(workId),
-      ownerIdForRequest(request),
+      await ownerIdForRequest(request),
       input.volumeId,
       input.chapterIds,
     );

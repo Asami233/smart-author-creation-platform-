@@ -8,7 +8,7 @@ type Context = { params: Promise<{ chapterId: string }> };
 export async function GET(request: Request, { params }: Context) {
   return api(async () => {
     const { chapterId } = await params;
-    return listVersions(idSchema.parse(chapterId), ownerIdForRequest(request));
+    return listVersions(idSchema.parse(chapterId), await ownerIdForRequest(request));
   });
 }
 
@@ -16,6 +16,6 @@ export async function POST(request: Request, { params }: Context) {
   return api(async () => {
     const { chapterId } = await params;
     const input = await parseJson(request, createManualVersionSchema);
-    return createManualVersion(idSchema.parse(chapterId), ownerIdForRequest(request), input.label);
+    return createManualVersion(idSchema.parse(chapterId), await ownerIdForRequest(request), input.label);
   }, 201);
 }

@@ -8,7 +8,7 @@ type Context = { params: Promise<{ workId: string }> };
 export async function GET(request: Request, { params }: Context) {
   return api(async () => {
     const { workId } = await params;
-    return getWorkStats(idSchema.parse(workId), ownerIdForRequest(request));
+    return getWorkStats(idSchema.parse(workId), await ownerIdForRequest(request));
   });
 }
 
@@ -18,7 +18,7 @@ export async function PUT(request: Request, { params }: Context) {
     const input = await parseJson(request, updateWritingGoalSchema);
     return setWritingGoal(
       idSchema.parse(workId),
-      ownerIdForRequest(request),
+      await ownerIdForRequest(request),
       input.date,
       input.targetWords,
     );

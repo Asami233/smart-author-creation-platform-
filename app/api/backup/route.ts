@@ -4,7 +4,7 @@ import { createFullBackup } from "@/server/services/data-safety";
 
 export async function GET(request: Request) {
   try {
-    const backup = await createFullBackup(ownerIdForRequest(request));
+    const backup = await createFullBackup(await ownerIdForRequest(request));
     const date = backup.exportedAt.slice(0, 10);
     return new Response(JSON.stringify(backup, null, 2), {
       headers: {

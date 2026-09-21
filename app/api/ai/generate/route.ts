@@ -6,6 +6,6 @@ import { generateWithAi } from "@/server/services/ai";
 export async function POST(request: Request) {
   return api(async () => {
     const input = await parseJson(request, aiGenerationSchema);
-    return generateWithAi(ownerIdForRequest(request), input);
+    return generateWithAi(await ownerIdForRequest(request), input);
   });
 }

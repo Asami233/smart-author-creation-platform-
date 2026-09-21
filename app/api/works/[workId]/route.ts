@@ -8,7 +8,7 @@ type Context = { params: Promise<{ workId: string }> };
 export async function GET(request: Request, { params }: Context) {
   return api(async () => {
     const { workId } = await params;
-    return getWorkspace(idSchema.parse(workId), ownerIdForRequest(request));
+    return getWorkspace(idSchema.parse(workId), await ownerIdForRequest(request));
   });
 }
 
@@ -16,13 +16,13 @@ export async function PATCH(request: Request, { params }: Context) {
   return api(async () => {
     const { workId } = await params;
     const input = await parseJson(request, updateWorkSchema);
-    return updateWork(idSchema.parse(workId), ownerIdForRequest(request), input);
+    return updateWork(idSchema.parse(workId), await ownerIdForRequest(request), input);
   });
 }
 
 export async function DELETE(request: Request, { params }: Context) {
   return apiEmpty(async () => {
     const { workId } = await params;
-    await archiveWork(idSchema.parse(workId), ownerIdForRequest(request));
+    await archiveWork(idSchema.parse(workId), await ownerIdForRequest(request));
   });
 }

@@ -5,5 +5,5 @@ import { restoreDeletedChapter } from "@/server/services/data-safety";
 
 export async function POST(request: Request, context: { params: Promise<{ chapterId: string }> }) {
   const { chapterId } = await context.params;
-  return api(() => restoreDeletedChapter(idSchema.parse(chapterId), ownerIdForRequest(request)));
+  return api(async () => restoreDeletedChapter(idSchema.parse(chapterId), await ownerIdForRequest(request)));
 }

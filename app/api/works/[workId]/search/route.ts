@@ -9,6 +9,6 @@ export async function GET(request: Request, { params }: Context) {
   return api(async () => {
     const { workId } = await params;
     const query = new URL(request.url).searchParams.get("q") ?? "";
-    return searchWork(idSchema.parse(workId), ownerIdForRequest(request), query);
+    return searchWork(idSchema.parse(workId), await ownerIdForRequest(request), query);
   });
 }
