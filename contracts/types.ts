@@ -18,8 +18,29 @@ export type Work = {
   genre: string;
   status: "draft" | "completed" | "archived";
   targetWords: number;
+  totalWords: number;
+  chapterCount: number;
   createdAt: string;
   updatedAt: string;
+};
+
+export type WorkspaceDashboard = {
+  works: Work[];
+  activeWorkId: string | null;
+  activeChapterId: string | null;
+};
+
+export type AiProviderModel = {
+  id: string;
+  ownedBy: string | null;
+};
+
+export type AiConnectionTestResult = {
+  connected: true;
+  baseUrl: string;
+  model: string;
+  latencyMs: number;
+  responsePreview: string;
 };
 
 export type Volume = {

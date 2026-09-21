@@ -119,7 +119,21 @@ export const updateWritingGoalSchema = z.object({
 export const updateAiSettingsSchema = z.object({
   baseUrl: z.string().url().max(500),
   model: requiredText(160),
-  apiKey: z.string().min(8).max(1000),
+  apiKey: z.string().min(8).max(1000).optional(),
+});
+
+export const aiProviderConnectionSchema = z.object({
+  baseUrl: z.string().url().max(500).optional(),
+  apiKey: z.string().min(8).max(1000).optional(),
+});
+
+export const aiProviderTestSchema = aiProviderConnectionSchema.extend({
+  model: requiredText(160).optional(),
+});
+
+export const workspaceSelectionSchema = z.object({
+  workId: idSchema,
+  chapterId: idSchema.nullable().optional(),
 });
 
 const aiContextSchema = z.object({

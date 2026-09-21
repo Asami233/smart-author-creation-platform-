@@ -4,6 +4,7 @@ import { AppError, notFound } from "@/server/errors";
 import { decryptSecret, encryptSecret } from "@/server/crypto";
 import { isoNow, localDateKey, newId } from "@/server/text";
 import { buildAiMessages } from "@/server/ai/prompts";
+import { fetchProviderModels, probeChatCompletion } from "@/server/ai/provider-client";
 import { chatCompletionsUrl, normalizeProviderBaseUrl } from "@/server/ai/security";
 
 type AiConfigRow = {
@@ -18,6 +19,7 @@ type AiConfigRow = {
 };
 
 const DAILY_REQUEST_LIMIT = 100;
+type ProviderInput = { baseUrl?: string; apiKey?: string; model?: string };
 
 export async function getAiSettings(ownerId: string) {
   const config = await first<AiConfigRow>(
@@ -31,16 +33,27 @@ export async function getAiSettings(ownerId: string) {
     baseUrl: config.base_url,
     model: config.model,
     apiKeyHint: "••••••••",
+    apiKeyConfigured: true as const,
     updatedAt: config.updated_at,
   };
 }
 
 export async function saveAiSettings(
   ownerId: string,
-  input: { baseUrl: string; model: string; apiKey: string },
+  input: { baseUrl: string; model: string; apiKey?: string },
 ) {
   const baseUrl = normalizeProviderBaseUrl(input.baseUrl);
-  const encrypted = await encryptSecret(input.apiKey);
+  const existing = await first<AiConfigRow>(
+    `SELECT id, owner_id, base_url, model, encrypted_api_key, key_iv, created_at, updated_at
+     FROM ai_provider_configs WHERE owner_id = ?`,
+    ownerId,
+  );
+  if (!input.apiKey && !existing) {
+    throw new AppError(400, "AI_API_KEY_REQUIRED", "首次配置时必须填写 API Key");
+  }
+  const encrypted = input.apiKey
+    ? await encryptSecret(input.apiKey)
+    : { cipherText: existing!.encrypted_api_key, iv: existing!.key_iv };
   const now = isoNow();
   await run(
     `INSERT INTO ai_provider_configs
@@ -62,6 +75,41 @@ export async function saveAiSettings(
     now,
   );
   return getAiSettings(ownerId);
+}
+
+async function resolveProviderInput(ownerId: string, input: ProviderInput) {
+  const saved = await first<AiConfigRow>(
+    `SELECT id, owner_id, base_url, model, encrypted_api_key, key_iv, created_at, updated_at
+     FROM ai_provider_configs WHERE owner_id = ?`,
+    ownerId,
+  );
+  const baseUrl = input.baseUrl ?? saved?.base_url;
+  const model = input.model ?? saved?.model;
+  const apiKey = input.apiKey ??
+    (saved ? await decryptSecret(saved.encrypted_api_key, saved.key_iv) : undefined);
+  if (!baseUrl || !apiKey) {
+    throw new AppError(400, "AI_CONFIG_INCOMPLETE", "请填写 API 地址和 API Key");
+  }
+  return {
+    baseUrl: normalizeProviderBaseUrl(baseUrl),
+    apiKey,
+    model,
+  };
+}
+
+export async function listAvailableModels(
+  ownerId: string,
+  input: { baseUrl?: string; apiKey?: string },
+) {
+  const provider = await resolveProviderInput(ownerId, input);
+  const models = await fetchProviderModels(provider);
+  return { baseUrl: provider.baseUrl, models };
+}
+
+export async function testAiConnection(ownerId: string, input: ProviderInput) {
+  const provider = await resolveProviderInput(ownerId, input);
+  if (!provider.model) throw new AppError(400, "AI_MODEL_REQUIRED", "请选择或填写模型名称");
+  return probeChatCompletion({ ...provider, model: provider.model });
 }
 
 export async function deleteAiSettings(ownerId: string): Promise<void> {

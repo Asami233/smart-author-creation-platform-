@@ -50,7 +50,16 @@ export function normalizeProviderBaseUrl(value: string): string {
 }
 
 export function chatCompletionsUrl(baseUrl: string): string {
+  return `${providerApiRoot(baseUrl)}/chat/completions`;
+}
+
+export function providerApiRoot(baseUrl: string): string {
   const normalized = normalizeProviderBaseUrl(baseUrl);
-  if (normalized.endsWith("/chat/completions")) return normalized;
-  return `${normalized}/chat/completions`;
+  return normalized.endsWith("/chat/completions")
+    ? normalized.slice(0, -"/chat/completions".length)
+    : normalized;
+}
+
+export function modelsUrl(baseUrl: string): string {
+  return `${providerApiRoot(baseUrl)}/models`;
 }

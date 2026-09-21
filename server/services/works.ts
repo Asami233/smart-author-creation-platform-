@@ -153,6 +153,20 @@ export async function createWork(ownerId: string, input: CreateWorkInput) {
       now,
       now,
     ),
+    statement(
+      `INSERT INTO workspace_preferences
+       (owner_id, active_work_id, active_chapter_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(owner_id) DO UPDATE SET
+         active_work_id = excluded.active_work_id,
+         active_chapter_id = excluded.active_chapter_id,
+         updated_at = excluded.updated_at`,
+      ownerId,
+      workId,
+      chapterId,
+      now,
+      now,
+    ),
   ]);
 
   return getWorkspace(workId, ownerId);
@@ -220,6 +234,89 @@ export async function archiveWork(workId: string, ownerId: string): Promise<void
     workId,
     ownerId,
   );
+  await run(
+    `UPDATE workspace_preferences
+     SET active_work_id = NULL, active_chapter_id = NULL, updated_at = ?
+     WHERE owner_id = ? AND active_work_id = ?`,
+    isoNow(),
+    ownerId,
+    workId,
+  );
+}
+
+export async function getWorkspaceDashboard(ownerId: string) {
+  const works = await listWorks(ownerId);
+  const preference = await first<{ active_work_id: string | null; active_chapter_id: string | null }>(
+    `SELECT active_work_id, active_chapter_id
+     FROM workspace_preferences WHERE owner_id = ?`,
+    ownerId,
+  );
+  const activeWorkId = works.some((work) => work.id === preference?.active_work_id)
+    ? preference!.active_work_id
+    : (works[0]?.id ?? null);
+  if (!activeWorkId) return { works, activeWorkId: null, activeChapterId: null };
+
+  const preferredChapter = preference?.active_work_id === activeWorkId
+    ? preference.active_chapter_id
+    : null;
+  const chapter = await first<{ id: string }>(
+    `SELECT id FROM chapters
+     WHERE work_id = ? AND deleted_at IS NULL
+       AND (? IS NULL OR id = ?)
+     ORDER BY sort_order, created_at LIMIT 1`,
+    activeWorkId,
+    preferredChapter,
+    preferredChapter,
+  );
+  const fallbackChapter = chapter ?? await first<{ id: string }>(
+    `SELECT id FROM chapters WHERE work_id = ? AND deleted_at IS NULL
+     ORDER BY sort_order, created_at LIMIT 1`,
+    activeWorkId,
+  );
+  return { works, activeWorkId, activeChapterId: fallbackChapter?.id ?? null };
+}
+
+export async function setActiveWorkspace(
+  ownerId: string,
+  input: { workId: string; chapterId?: string | null },
+) {
+  await assertWorkOwned(input.workId, ownerId);
+  let activeChapterId = input.chapterId ?? null;
+  if (activeChapterId) {
+    const chapter = await first<{ id: string }>(
+      `SELECT c.id FROM chapters c
+       JOIN works w ON w.id = c.work_id
+       WHERE c.id = ? AND c.work_id = ? AND c.deleted_at IS NULL
+         AND w.owner_id = ? AND w.status != 'archived'`,
+      activeChapterId,
+      input.workId,
+      ownerId,
+    );
+    if (!chapter) notFound("章节");
+  } else {
+    const chapter = await first<{ id: string }>(
+      `SELECT id FROM chapters WHERE work_id = ? AND deleted_at IS NULL
+       ORDER BY sort_order, created_at LIMIT 1`,
+      input.workId,
+    );
+    activeChapterId = chapter?.id ?? null;
+  }
+  const now = isoNow();
+  await run(
+    `INSERT INTO workspace_preferences
+     (owner_id, active_work_id, active_chapter_id, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(owner_id) DO UPDATE SET
+       active_work_id = excluded.active_work_id,
+       active_chapter_id = excluded.active_chapter_id,
+       updated_at = excluded.updated_at`,
+    ownerId,
+    input.workId,
+    activeChapterId,
+    now,
+    now,
+  );
+  return { activeWorkId: input.workId, activeChapterId };
 }
 
 export async function listVolumes(workId: string, ownerId: string) {

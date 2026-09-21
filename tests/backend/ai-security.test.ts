@@ -1,11 +1,17 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { chatCompletionsUrl, normalizeProviderBaseUrl } from "../../server/ai/security";
+import { chatCompletionsUrl, modelsUrl, normalizeProviderBaseUrl } from "../../server/ai/security";
 
 describe("AI provider URL validation", () => {
   it("normalizes a public HTTPS endpoint", () => {
     assert.equal(normalizeProviderBaseUrl("https://api.openai.com/v1/"), "https://api.openai.com/v1");
     assert.equal(chatCompletionsUrl("https://api.deepseek.com"), "https://api.deepseek.com/chat/completions");
+  });
+
+  it("builds model-discovery and chat endpoints from an API root", () => {
+    assert.equal(modelsUrl("https://api.openai.com/v1/"), "https://api.openai.com/v1/models");
+    assert.equal(chatCompletionsUrl("https://api.deepseek.com"), "https://api.deepseek.com/chat/completions");
+    assert.equal(modelsUrl("https://proxy.example/v1/chat/completions"), "https://proxy.example/v1/models");
   });
 
   for (const value of [

@@ -311,3 +311,18 @@ export const authChallenges = sqliteTable(
     ),
   ],
 );
+
+export const workspacePreferences = sqliteTable(
+  "workspace_preferences",
+  {
+    ownerId: text("owner_id").primaryKey(),
+    activeWorkId: text("active_work_id").references(() => works.id, {
+      onDelete: "set null",
+    }),
+    activeChapterId: text("active_chapter_id").references(() => chapters.id, {
+      onDelete: "set null",
+    }),
+    ...timestamps,
+  },
+  (table) => [index("idx_workspace_active_work").on(table.activeWorkId)],
+);
