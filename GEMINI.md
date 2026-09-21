@@ -4,6 +4,7 @@
 
 - [AGENTS.md](./AGENTS.md)
 - [docs/COLLABORATION_RULES.md](./docs/COLLABORATION_RULES.md)
+- [后端交接索引](./docs/handoffs/README.md)，以及索引中与当前任务相关的最新交接文档
 
 ## 你的任务范围
 
@@ -34,6 +35,7 @@
 2. 需要新接口或字段时，在交付说明中写清请求、响应、错误状态和使用场景，不要自行实现后端。
 3. 后端尚未完成时，可以在前端责任区使用 mock，但必须集中放置并标记 `MOCK_ONLY`，不得伪装成正式接口。
 4. 不得在浏览器中直接调用 OpenAI、DeepSeek 等模型服务，也不得把 API Key 保存进前端代码。
+5. Codex 完成后端功能后会在 `docs/handoffs/` 留下交接文档。实现页面前先逐项核对其中的“Gemini 必须修改”和“联合验收”，完成后在自己的交付说明中逐项回应。
 
 ## 提交前检查
 
