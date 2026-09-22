@@ -56,10 +56,21 @@
 - 类型检查：`npx tsc --noEmit` 通过。
 - 后端测试：`node --import tsx --test tests/backend/*.test.ts`，23 项通过。
 - 构建：`npm run build` 通过。
-- 本地 API：`tests/backend/api-smoke.ps1` 与 `tests/backend/workspace-concurrency-smoke.mjs` 通过；验证了旧请求兼容、过期版本 `409`、并发只能成功一次、字数和快照不重复。仅在本地 D1 测试，未触及远程数据库。
-- 未验证：真实邮件发送、跨账号浏览器联调；不属于本次章节保存改动，但仍是迭代 1 联合验收项。
+- 本地 API：`tests/backend/api-smoke.ps1`、`tests/backend/workspace-concurrency-smoke.mjs` 与 `tests/backend/workspace-isolation-smoke.mjs` 通过；验证了旧请求兼容、过期版本 `409`、并发只能成功一次、字数和快照不重复、跨账号作品不可见、跨作品章节/分卷不可串联。隔离测试使用本地开发验证码，测试账号与作品已清理；未触及远程数据库。
+- 未验证：真实邮件发送、跨账号真实浏览器联调；仍是迭代 1 联合验收项。
 
 ## 8. 已知限制与后续
 
 - `expectedRevision` 暂时可省略以兼容当前前端。Gemini 全部保存入口接入并通过联合验收后，再由 Codex 将契约改为必填并删除兼容路径。
 - 前端历史版本与导出仍有 mock；这属于迭代 2，不能用当前假 UI 宣称已完成。
+
+## 9. Gemini 交付后的代码复核反馈（2026-09-22）
+
+已确认 `app/page.tsx` 映射了章节 `revision`、主要保存入口携带 `expectedRevision`，并移除了无作品自动创建样例的路径。但迭代 1 的“不会静默丢稿”尚不能勾选完成：
+
+1. `flushPendingSave()` 失败时返回 `false`，`handleSelectWork`、`selectChapter`、`addChapter` 却忽略返回值继续切换。尤其冲突发生后 `pendingSaveRef` 已清空，再切章会清除冲突横幅并重新加载正文，未保存草稿可能丢失。请在保存失败或冲突时阻止切换，并保留草稿直到作者明确选择处理方式。
+2. `handleRestoreContent` 直接清空待保存队列，然后替换编辑器内容；若作者在 650ms 防抖窗口内点击历史恢复，先前编辑会消失。请先完成/确认待保存请求，失败则不执行恢复。
+3. `beforeunload` 仅检查 `pendingSaveRef`。请求发出后该引用立即清空，网络请求尚未完成时关闭标签页不会触发离开保护。请覆盖“保存中”和“冲突/保存失败且有脏草稿”的状态。
+4. 成功保存后再遇到输入并发的状态处理需要真实浏览器验证；代码审查和 TypeScript 构建不能替代“网络延迟 + 快速切章 + 两标签页冲突”的端到端验收。
+
+这些文件属于 Gemini 责任区，Codex 不直接修改。上述问题修复并联合实测前，后端继续兼容不带 `expectedRevision` 的旧请求，迭代 1 不标记完成。
