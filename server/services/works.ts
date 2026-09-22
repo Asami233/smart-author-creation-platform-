@@ -396,6 +396,13 @@ export async function deleteVolume(volumeId: string, ownerId: string): Promise<v
   const now = isoNow();
   await batch([
     statement("UPDATE chapters SET volume_id = NULL, updated_at = ? WHERE volume_id = ?", now, volumeId),
+    statement(
+      `UPDATE outlines SET scope_type = 'work', scope_id = NULL, updated_at = ?
+       WHERE work_id = ? AND scope_type = 'volume' AND scope_id = ?`,
+      now,
+      volume.workId,
+      volumeId,
+    ),
     statement("DELETE FROM volumes WHERE id = ?", volumeId),
     statement("UPDATE works SET updated_at = ? WHERE id = ?", now, volume.workId),
   ]);

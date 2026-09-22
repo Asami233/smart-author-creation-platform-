@@ -99,6 +99,37 @@ function orderBy(kind: KnowledgeKind): string {
   return "sort_order, created_at";
 }
 
+async function assertOutlineScope(
+  workId: string,
+  scopeType: "work" | "volume" | "chapter",
+  scopeId: string | null | undefined,
+): Promise<void> {
+  if (scopeType === "work") {
+    if (scopeId && scopeId !== workId) conflict("作品级大纲不能关联其他作品");
+    return;
+  }
+  if (!scopeId) conflict("分卷或章节大纲必须指定关联对象");
+  const table = scopeType === "volume" ? "volumes" : "chapters";
+  const row = await first<{ id: string }>(
+    `SELECT id FROM ${table} WHERE id = ? AND work_id = ?${scopeType === "chapter" ? " AND deleted_at IS NULL" : ""}`,
+    scopeId,
+    workId,
+  );
+  if (!row) conflict("大纲关联对象不属于当前作品");
+}
+
+async function assertTimelineParticipants(workId: string, participantIds: string[]): Promise<void> {
+  if (participantIds.length === 0) return;
+  const uniqueIds = [...new Set(participantIds)];
+  if (uniqueIds.length !== participantIds.length) conflict("参与角色列表包含重复对象");
+  const rows = await all<{ id: string }>(
+    `SELECT id FROM characters WHERE work_id = ? AND id IN (${uniqueIds.map(() => "?").join(",")})`,
+    workId,
+    ...uniqueIds,
+  );
+  if (rows.length !== uniqueIds.length) conflict("参与角色不属于当前作品");
+}
+
 export async function listKnowledge(workId: string, ownerId: string, kind: KnowledgeKind) {
   await assertWorkOwned(workId, ownerId);
   const rows = await all<GenericRow>(
@@ -133,6 +164,7 @@ export async function createKnowledge(
 
   if (kind === "outlines") {
     const input = createOutlineSchema.parse(payload);
+    await assertOutlineScope(workId, input.scopeType, input.scopeId);
     await run(
       `INSERT INTO outlines
        (id, work_id, scope_type, scope_id, title, content, sort_order, created_at, updated_at)
@@ -185,6 +217,7 @@ export async function createKnowledge(
     );
   } else {
     const input = createTimelineEventSchema.parse(payload);
+    await assertTimelineParticipants(workId, input.participantIds);
     if (input.relatedChapterId) {
       const chapter = await first<{ id: string }>(
         "SELECT id FROM chapters WHERE id = ? AND work_id = ? AND deleted_at IS NULL",
@@ -230,6 +263,16 @@ export async function updateKnowledge(
 
   if (kind === "outlines") {
     const input = updateOutlineSchema.parse(payload);
+    const previous = await first<{ scope_type: "work" | "volume" | "chapter"; scope_id: string | null }>(
+      "SELECT scope_type, scope_id FROM outlines WHERE id = ?",
+      id,
+    );
+    if (!previous) notFound("设定条目");
+    await assertOutlineScope(
+      current.workId,
+      input.scopeType ?? previous.scope_type,
+      input.scopeId === undefined ? previous.scope_id : input.scopeId,
+    );
     if (input.scopeType !== undefined) add("scope_type", input.scopeType);
     if (input.scopeId !== undefined) add("scope_id", input.scopeId);
     if (input.title !== undefined) add("title", input.title);
@@ -254,6 +297,9 @@ export async function updateKnowledge(
     if (input.metadata !== undefined) add("metadata_json", JSON.stringify(input.metadata));
   } else {
     const input = updateTimelineEventSchema.parse(payload);
+    if (input.participantIds !== undefined) {
+      await assertTimelineParticipants(current.workId, input.participantIds);
+    }
     if (input.relatedChapterId) {
       const chapter = await first<{ id: string }>(
         "SELECT id FROM chapters WHERE id = ? AND work_id = ? AND deleted_at IS NULL",
@@ -281,6 +327,20 @@ export async function deleteKnowledge(kind: KnowledgeKind, id: string, ownerId: 
   const current = await getKnowledge(kind, id, ownerId);
   await batch([
     statement("DELETE FROM chapter_links WHERE entity_type = ? AND entity_id = ?", kindToLinkType(kind), id),
+    ...(kind === "characters" ? [statement(
+      `UPDATE timeline_events
+       SET participants_json = COALESCE((
+         SELECT json_group_array(value) FROM json_each(timeline_events.participants_json)
+         WHERE value != ?
+       ), '[]'), updated_at = ?
+       WHERE work_id = ? AND EXISTS (
+         SELECT 1 FROM json_each(timeline_events.participants_json) WHERE value = ?
+       )`,
+      id,
+      isoNow(),
+      current.workId,
+      id,
+    )] : []),
     statement(`DELETE FROM ${tableByKind[kind]} WHERE id = ?`, id),
     statement("UPDATE works SET updated_at = ? WHERE id = ?", isoNow(), current.workId),
   ]);

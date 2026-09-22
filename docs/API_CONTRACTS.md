@@ -78,7 +78,7 @@
 | GET | `/api/chapters/:chapterId/versions` | 获取版本摘要列表 |
 | POST | `/api/chapters/:chapterId/versions` | 创建手动命名版本，body 为 `{ "label": "定稿前" }` |
 | GET | `/api/chapter-versions/:versionId` | 获取版本完整内容，用于前端对比 |
-| POST | `/api/chapter-versions/:versionId/restore` | 恢复版本；恢复前自动备份当前正文 |
+| POST | `/api/chapter-versions/:versionId/restore` | 恢复版本；恢复前自动备份当前正文；建议 body 为 `{ "expectedRevision": 当前章节版本号 }`，过期返回 409（旧客户端空 body 仍兼容） |
 
 ## 大纲、角色、世界观和时间线
 
@@ -90,6 +90,9 @@
 | GET/PATCH/DELETE | `/api/knowledge/:kind/:id` | 获取、更新或删除单个对象 |
 
 世界观类型：`location`、`faction`、`system`、`item`、`custom`。
+
+作品级大纲的 `scopeId` 可省略；分卷/章节级大纲必须指定当前作品内存在的分卷/章节 ID。时间线 `participantIds` 必须是当前作品的角色 ID 且不能重复。跨作品关联返回 `409 CONFLICT`。
+删除角色会清理其章节关联与时间线参与 ID；删除分卷会把对应分卷级大纲转为作品级，保留大纲内容。
 
 章节关联：
 

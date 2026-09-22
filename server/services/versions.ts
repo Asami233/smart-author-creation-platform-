@@ -1,6 +1,6 @@
 import { all, batch, first, statement } from "@/server/db";
-import { notFound } from "@/server/errors";
-import { countWords, htmlToPlainText, isoNow, localDateKey, newId } from "@/server/text";
+import { conflict, notFound } from "@/server/errors";
+import { countWords, htmlToPlainText, isoNow, newId } from "@/server/text";
 import { getChapter, getChapterRow } from "./chapters";
 
 type VersionRow = {
@@ -73,18 +73,38 @@ export async function createManualVersion(chapterId: string, ownerId: string, la
   return getVersion(id, ownerId);
 }
 
-export async function restoreVersion(versionId: string, ownerId: string) {
+export async function restoreVersion(versionId: string, ownerId: string, expectedRevision?: number) {
   const version = await getVersion(versionId, ownerId);
   const current = await getChapterRow(version.chapterId, ownerId);
+  if (expectedRevision !== undefined && expectedRevision !== current.revision) {
+    conflict("章节已在其他位置更新，请刷新后再恢复历史版本", {
+      expectedRevision,
+      currentRevision: current.revision,
+    });
+  }
   const content = version.content ?? "";
   const plainText = htmlToPlainText(content);
   const wordCount = countWords(plainText);
   const now = isoNow();
+  const saveId = newId();
   const statements = [
+    statement(
+      `UPDATE chapters SET content = ?, plain_text = ?, word_count = ?,
+       revision = revision + 1, last_save_id = ?, updated_at = ?
+       WHERE id = ? AND revision = ? AND deleted_at IS NULL`,
+      content,
+      plainText,
+      wordCount,
+      saveId,
+      now,
+      current.id,
+      current.revision,
+    ),
     statement(
       `INSERT INTO chapter_versions
        (id, chapter_id, kind, label, content, plain_text, word_count, source_revision, created_at)
-       VALUES (?, ?, 'restore', ?, ?, ?, ?, ?, ?)`,
+       SELECT ?, ?, 'restore', ?, ?, ?, ?, ?, ?
+       WHERE EXISTS (SELECT 1 FROM chapters WHERE id = ? AND last_save_id = ?)`,
       newId(),
       current.id,
       `恢复 ${version.createdAt} 前的内容`,
@@ -93,37 +113,22 @@ export async function restoreVersion(versionId: string, ownerId: string) {
       current.word_count,
       current.revision,
       now,
+      current.id,
+      saveId,
     ),
     statement(
-      `UPDATE chapters SET content = ?, plain_text = ?, word_count = ?,
-       revision = revision + 1, updated_at = ? WHERE id = ?`,
-      content,
-      plainText,
-      wordCount,
+      `UPDATE works SET updated_at = ? WHERE id = ?
+       AND EXISTS (SELECT 1 FROM chapters WHERE id = ? AND last_save_id = ?)`,
       now,
+      current.work_id,
       current.id,
+      saveId,
     ),
-    statement("UPDATE works SET updated_at = ? WHERE id = ?", now, current.work_id),
   ];
-  const positiveDelta = Math.max(0, wordCount - current.word_count);
-  if (positiveDelta > 0) {
-    statements.push(
-      statement(
-        `INSERT INTO writing_daily_stats
-         (id, work_id, stat_date, target_words, words_written, created_at, updated_at)
-         VALUES (?, ?, ?, 3000, ?, ?, ?)
-         ON CONFLICT(work_id, stat_date) DO UPDATE SET
-           words_written = words_written + excluded.words_written,
-           updated_at = excluded.updated_at`,
-        newId(),
-        current.work_id,
-        localDateKey(),
-        positiveDelta,
-        now,
-        now,
-      ),
-    );
+  // Restoring existing prose changes total words but is not new writing toward today's goal.
+  const results = await batch(statements);
+  if ((results[0]?.meta?.changes ?? 0) === 0) {
+    conflict("章节恢复时发生版本冲突，请刷新后重试");
   }
-  await batch(statements);
   return getChapter(current.id, ownerId);
 }

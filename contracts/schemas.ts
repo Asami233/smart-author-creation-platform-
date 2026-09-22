@@ -60,6 +60,10 @@ export const createManualVersionSchema = z.object({
   label: requiredText(80),
 });
 
+export const restoreVersionSchema = z.object({
+  expectedRevision: z.number().int().min(1).optional(),
+});
+
 export const knowledgeKindSchema = z.enum(["outlines", "characters", "world", "timeline"]);
 
 export const createOutlineSchema = z.object({

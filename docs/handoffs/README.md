@@ -30,3 +30,4 @@ Gemini 每次开始接口接入前必须先读本索引，再阅读与当前任�
 - 真实 API 冒烟测试通过，或明确说明无法测试的外部依赖。
 - 已新增交接文档并更新本索引。
 - 已列出 Gemini 必须修改、不得继续保留的 mock，以及联合验收步骤。
+| 2026-09-22 | 迭代 2 设定、版本与导出安全校验 | [`2026-09-22-backend-knowledge-version-export-safety.md`](./2026-09-22-backend-knowledge-version-export-safety.md) | 待 Gemini 接入与联合验收 |
