@@ -141,6 +141,7 @@ export async function updateChapter(chapterId: string, ownerId: string, input: U
   const nextWordCount = input.content === undefined ? current.word_count : countWords(nextPlainText);
   const contentChanged = input.content !== undefined && input.content !== current.content;
   const now = isoNow();
+  const saveId = newId();
   const statements: D1PreparedStatement[] = [];
 
   if (contentChanged && (await shouldSnapshot(current, nextWordCount))) {
@@ -148,7 +149,8 @@ export async function updateChapter(chapterId: string, ownerId: string, input: U
       statement(
         `INSERT INTO chapter_versions
          (id, chapter_id, kind, label, content, plain_text, word_count, source_revision, created_at)
-         VALUES (?, ?, 'auto', '', ?, ?, ?, ?, ?)`,
+         SELECT ?, ?, 'auto', '', ?, ?, ?, ?, ?
+         WHERE EXISTS (SELECT 1 FROM chapters WHERE id = ? AND last_save_id = ?)`,
         newId(),
         current.id,
         current.content,
@@ -156,12 +158,14 @@ export async function updateChapter(chapterId: string, ownerId: string, input: U
         current.word_count,
         current.revision,
         now,
+        chapterId,
+        saveId,
       ),
     );
   }
 
-  const columns = ["updated_at = ?", "revision = revision + 1"];
-  const values: unknown[] = [now];
+  const columns = ["updated_at = ?", "last_save_id = ?", "revision = revision + 1"];
+  const values: unknown[] = [now, saveId];
   const add = (column: string, value: unknown) => {
     columns.push(`${column} = ?`);
     values.push(value);
@@ -176,8 +180,7 @@ export async function updateChapter(chapterId: string, ownerId: string, input: U
   }
   if (input.status !== undefined) add("status", input.status);
   if (input.sortOrder !== undefined) add("sort_order", input.sortOrder);
-  const updateIndex = statements.length;
-  statements.push(
+  statements.unshift(
     statement(
       `UPDATE chapters SET ${columns.join(", ")} WHERE id = ? AND revision = ? AND deleted_at IS NULL`,
       ...values,
@@ -193,7 +196,8 @@ export async function updateChapter(chapterId: string, ownerId: string, input: U
       statement(
         `INSERT INTO writing_daily_stats
          (id, work_id, stat_date, target_words, words_written, created_at, updated_at)
-         VALUES (?, ?, ?, 3000, ?, ?, ?)
+         SELECT ?, ?, ?, 3000, ?, ?, ?
+         WHERE EXISTS (SELECT 1 FROM chapters WHERE id = ? AND last_save_id = ?)
          ON CONFLICT(work_id, stat_date) DO UPDATE SET
            words_written = words_written + excluded.words_written,
            updated_at = excluded.updated_at`,
@@ -203,13 +207,24 @@ export async function updateChapter(chapterId: string, ownerId: string, input: U
         positiveDelta,
         now,
         now,
+        chapterId,
+        saveId,
       ),
     );
   }
-  statements.push(statement("UPDATE works SET updated_at = ? WHERE id = ?", now, current.work_id));
+  statements.push(
+    statement(
+      `UPDATE works SET updated_at = ? WHERE id = ?
+       AND EXISTS (SELECT 1 FROM chapters WHERE id = ? AND last_save_id = ?)`,
+      now,
+      current.work_id,
+      chapterId,
+      saveId,
+    ),
+  );
 
   const results = await batch(statements);
-  const updateResult = results[updateIndex];
+  const updateResult = results[0];
   if ((updateResult?.meta?.changes ?? 0) === 0) {
     conflict("章节更新发生冲突，请刷新后重试");
   }

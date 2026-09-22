@@ -66,6 +66,7 @@ export const chapters = sqliteTable(
     status: text("status").notNull().default("draft"),
     sortOrder: integer("sort_order").notNull().default(0),
     revision: integer("revision").notNull().default(1),
+    lastSaveId: text("last_save_id"),
     deletedAt: text("deleted_at"),
     ...timestamps,
   },

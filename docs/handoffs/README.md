@@ -8,6 +8,7 @@ Gemini 每次开始接口接入前必须先读本索引，再阅读与当前任�
 
 | 日期 | 主题 | 文档 | 前端状态 |
 | --- | --- | --- | --- |
+| 2026-09-22 | 工作台章节并发保存保护 | [`2026-09-22-backend-workspace-revision-safety.md`](./2026-09-22-backend-workspace-revision-safety.md) | 待 Gemini 接入与联合验收 |
 | 2026-09-21 | AI 首次配置 `baseUrl` 未定义崩溃 | [`2026-09-21-ai-settings-unconfigured-state.md`](./2026-09-21-ai-settings-unconfigured-state.md) | Gemini 待修复 |
 | 2026-09-21 | 邮箱注册、登录、会话和资料 | [`../AUTH_API.md`](../AUTH_API.md) | 已开始接入，需联合验收真实邮件 |
 | 2026-09-21 | 多小说工作台与真实 AI 配置 | [`../WORKSPACE_AI_HANDOFF.md`](../WORKSPACE_AI_HANDOFF.md) | 待 Gemini 接入 |
