@@ -140,6 +140,28 @@ export async function listKnowledge(workId: string, ownerId: string, kind: Knowl
   return rows.map((row) => mapRow(kind, row));
 }
 
+export async function reorderOutlines(workId: string, ownerId: string, outlineIds: string[]) {
+  await assertWorkOwned(workId, ownerId);
+  const rows = await all<{ id: string }>("SELECT id FROM outlines WHERE work_id = ?", workId);
+  if (rows.length !== outlineIds.length
+    || new Set(outlineIds).size !== outlineIds.length
+    || rows.some((row) => !outlineIds.includes(row.id))) {
+    conflict("大纲排序列表必须包含当前作品的全部大纲且不得重复");
+  }
+  const now = isoNow();
+  await batch([
+    ...outlineIds.map((id, index) => statement(
+      "UPDATE outlines SET sort_order = ?, updated_at = ? WHERE id = ? AND work_id = ?",
+      index,
+      now,
+      id,
+      workId,
+    )),
+    statement("UPDATE works SET updated_at = ? WHERE id = ?", now, workId),
+  ]);
+  return listKnowledge(workId, ownerId, "outlines");
+}
+
 export async function getKnowledge(kind: KnowledgeKind, id: string, ownerId: string) {
   const row = await first<GenericRow>(
     `SELECT item.* FROM ${tableByKind[kind]} item
@@ -389,6 +411,55 @@ export async function addChapterLink(
     entityId,
     isoNow(),
   );
+  return listChapterLinks(chapterId, ownerId);
+}
+
+export async function addChapterLinks(
+  chapterId: string,
+  ownerId: string,
+  links: Array<{ entityType: string; entityId: string }>,
+) {
+  const chapter = await getChapterRow(chapterId, ownerId);
+  const grouped = new Map<string, string[]>();
+  for (const link of links) {
+    const ids = grouped.get(link.entityType) ?? [];
+    ids.push(link.entityId);
+    grouped.set(link.entityType, ids);
+  }
+  for (const [entityType, ids] of grouped) {
+    const entity = entityTable[entityType];
+    if (!entity) conflict("不支持的关联类型");
+    const rows = await all<{ id: string }>(
+      `SELECT id FROM ${entity.table} WHERE work_id = ? AND id IN (${ids.map(() => "?").join(",")})`,
+      chapter.work_id,
+      ...ids,
+    );
+    if (rows.length !== ids.length) conflict("关联对象不属于当前作品");
+  }
+  const now = isoNow();
+  await batch(links.map((link) => statement(
+    `INSERT INTO chapter_links (chapter_id, entity_type, entity_id, created_at)
+     VALUES (?, ?, ?, ?) ON CONFLICT(chapter_id, entity_type, entity_id) DO NOTHING`,
+    chapterId,
+    link.entityType,
+    link.entityId,
+    now,
+  )));
+  return listChapterLinks(chapterId, ownerId);
+}
+
+export async function removeChapterLinks(
+  chapterId: string,
+  ownerId: string,
+  links: Array<{ entityType: string; entityId: string }>,
+) {
+  await getChapterRow(chapterId, ownerId);
+  await batch(links.map((link) => statement(
+    "DELETE FROM chapter_links WHERE chapter_id = ? AND entity_type = ? AND entity_id = ?",
+    chapterId,
+    link.entityType,
+    link.entityId,
+  )));
   return listChapterLinks(chapterId, ownerId);
 }
 

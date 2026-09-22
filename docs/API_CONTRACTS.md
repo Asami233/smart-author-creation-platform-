@@ -80,6 +80,8 @@
 | GET | `/api/chapter-versions/:versionId` | 获取版本完整内容，用于前端对比 |
 | POST | `/api/chapter-versions/:versionId/restore` | 恢复版本；恢复前自动备份当前正文；建议 body 为 `{ "expectedRevision": 当前章节版本号 }`，过期返回 409（旧客户端空 body 仍兼容） |
 
+版本列表支持 `?limit=50&cursor=<上页 nextCursor>`，`limit` 为 1–200，默认 200。响应保持 `data` 为版本摘要数组，另附顶层 `pagination: { hasMore: boolean, nextCursor: string | null }`，因此旧客户端只读取 `data` 仍可工作。游标是仅用于翻页的不透明字符串，前端应原样回传；非法游标返回 `400 INVALID_CURSOR`。列表按创建时间和 ID 倒序稳定排列，不包含正文；正文需单独请求版本详情。
+
 ## 大纲、角色、世界观和时间线
 
 资源类型 `kind` 取值：`outlines`、`characters`、`world`、`timeline`。
@@ -101,6 +103,7 @@
 | GET | `/api/chapters/:chapterId/links` | 查看章节关联 |
 | POST | `/api/chapters/:chapterId/links` | 添加关联 |
 | DELETE | `/api/chapters/:chapterId/links?entityType=character&entityId=...` | 删除关联 |
+| POST/DELETE | `/api/chapters/:chapterId/links/batch` | 原子批量添加/删除关联；body 为 `{ "links": [{ "entityType": "character", "entityId": "UUID" }] }`，每次 1–100 条 |
 
 添加关联请求：
 
@@ -110,6 +113,10 @@
   "entityId": "角色 UUID"
 }
 ```
+
+批量关联请求不得重复；添加前验证所有目标均属于该章节作品，任一无效则整批返回 `409` 且不写入。批量删除只作用于当前章节的关联。成功响应的 `data` 为操作后的完整章节关联列表。
+
+大纲排序：`POST /api/works/:workId/knowledge/outlines/reorder`，body 为 `{ "outlineIds": ["按显示顺序排列的 UUID"] }`。列表必须恰好包含当前作品的全部大纲 ID，每个仅一次；缺失、重复或混入其他作品返回 `400`（重复/格式错误）或 `409`（非本作品完整列表）。成功响应的 `data` 为排序后的大纲列表，不修改大纲所属的作品或作用范围。
 
 ## 搜索与统计
 

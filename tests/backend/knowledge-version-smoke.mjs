@@ -81,12 +81,34 @@ try {
   assert.equal((await request("PATCH", `/api/knowledge/outlines/${outline.id}`, {
     scopeId: otherVolumeId,
   })).status, 409);
+  const secondOutline = data(await request("POST", `/api/works/${workId}/knowledge/outlines`, {
+    title: "全书剧情大纲",
+  }), 201);
+  const foreignOutline = data(await request("POST", `/api/works/${second.work.id}/knowledge/outlines`, {
+    title: "另一部作品的大纲",
+  }), 201);
+  const reordered = data(await request("POST", `/api/works/${workId}/knowledge/outlines/reorder`, {
+    outlineIds: [secondOutline.id, outline.id],
+  }));
+  assert.deepEqual(reordered.map((item) => item.id), [secondOutline.id, outline.id]);
+  assert.equal((await request("POST", `/api/works/${workId}/knowledge/outlines/reorder`, {
+    outlineIds: [outline.id],
+  })).status, 409);
+  assert.equal((await request("POST", `/api/works/${workId}/knowledge/outlines/reorder`, {
+    outlineIds: [outline.id, foreignOutline.id],
+  })).status, 409);
 
   const character = data(await request("POST", `/api/works/${workId}/knowledge/characters`, {
     name: "主角甲",
   }), 201);
   const otherCharacter = data(await request("POST", `/api/works/${second.work.id}/knowledge/characters`, {
     name: "主角乙",
+  }), 201);
+  const worldEntry = data(await request("POST", `/api/works/${workId}/knowledge/world`, {
+    category: "location", name: "第一部作品的山谷",
+  }), 201);
+  const foreignWorldEntry = data(await request("POST", `/api/works/${second.work.id}/knowledge/world`, {
+    category: "location", name: "第二部作品的山谷",
   }), 201);
   assert.equal((await request("POST", `/api/works/${workId}/knowledge/timeline`, {
     title: "错误的跨作品事件", participantIds: [otherCharacter.id],
@@ -100,6 +122,20 @@ try {
   assert.equal((await request("POST", `/api/chapters/${chapterId}/links`, {
     entityType: "character", entityId: otherCharacter.id,
   })).status, 409);
+  const linkBatchPath = `/api/chapters/${chapterId}/links/batch`;
+  assert.equal((await request("POST", linkBatchPath, { links: [
+    { entityType: "character", entityId: character.id },
+    { entityType: "world", entityId: foreignWorldEntry.id },
+  ] })).status, 409);
+  assert.deepEqual(data(await request("GET", `/api/chapters/${chapterId}/links`)), []);
+  const validLinks = [
+    { entityType: "character", entityId: character.id },
+    { entityType: "world", entityId: worldEntry.id },
+  ];
+  assert.equal(data(await request("POST", linkBatchPath, { links: validLinks }), 201).length, 2);
+  assert.equal(data(await request("POST", linkBatchPath, { links: validLinks }), 201).length, 2);
+  assert.equal(data(await request("DELETE", linkBatchPath, { links: [validLinks[0]] })).length, 1);
+  assert.deepEqual(data(await request("DELETE", linkBatchPath, { links: [validLinks[1]] })), []);
   assert.equal(data(await request("POST", `/api/chapters/${chapterId}/links`, {
     entityType: "character", entityId: character.id,
   }), 201).length, 1);
@@ -131,6 +167,18 @@ try {
   assert.equal(data(await request("GET", `/api/chapter-versions/${restoreBackup.id}`)).content, newChapter.content);
   const legacyRestore = data(await request("POST", `/api/chapter-versions/${manual.id}/restore`));
   assert.equal(legacyRestore.revision, restored.revision + 1, "无请求体的旧客户端恢复方式仍须兼容");
+  const pagedVersions = [];
+  let cursor = null;
+  do {
+    const result = await request("GET", `/api/chapters/${chapterId}/versions?limit=2${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`);
+    const page = data(result);
+    pagedVersions.push(...page);
+    cursor = result.payload.pagination.nextCursor;
+    assert.equal(result.payload.pagination.hasMore, cursor !== null);
+  } while (cursor);
+  assert.equal(pagedVersions.length, data(await request("GET", `/api/chapters/${chapterId}/versions`)).length);
+  assert.equal(new Set(pagedVersions.map((version) => version.id)).size, pagedVersions.length);
+  assert.equal((await request("GET", `/api/chapters/${chapterId}/versions?cursor=invalid`)).status, 400);
 
   for (const format of ["txt", "docx", "pdf"]) {
     const exported = await request("GET", `/api/works/${workId}/export?format=${format}`);

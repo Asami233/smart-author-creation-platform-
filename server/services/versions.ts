@@ -1,5 +1,5 @@
 import { all, batch, first, statement } from "@/server/db";
-import { conflict, notFound } from "@/server/errors";
+import { AppError, conflict, notFound } from "@/server/errors";
 import { countWords, htmlToPlainText, isoNow, newId } from "@/server/text";
 import { getChapter, getChapterRow } from "./chapters";
 
@@ -28,15 +28,51 @@ function mapVersion(row: VersionRow, includeContent = false) {
   };
 }
 
-export async function listVersions(chapterId: string, ownerId: string) {
+function encodeVersionCursor(row: VersionRow): string {
+  return btoa(`${row.created_at}|${row.id}`).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+}
+
+function decodeVersionCursor(cursor: string): { createdAt: string; id: string } {
+  try {
+    if (!/^[A-Za-z0-9_-]+$/.test(cursor)) throw new Error("invalid alphabet");
+    const decoded = atob(cursor.replaceAll("-", "+").replaceAll("_", "/"));
+    const [createdAt, id, extra] = decoded.split("|");
+    if (extra !== undefined || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(createdAt)
+      || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+      throw new Error("invalid cursor payload");
+    }
+    return { createdAt, id };
+  } catch {
+    throw new AppError(400, "INVALID_CURSOR", "历史版本分页游标无效");
+  }
+}
+
+export async function listVersions(
+  chapterId: string,
+  ownerId: string,
+  input: { limit: number; cursor?: string },
+) {
   await getChapterRow(chapterId, ownerId);
+  const cursor = input.cursor ? decodeVersionCursor(input.cursor) : null;
   const rows = await all<VersionRow>(
     `SELECT id, chapter_id, kind, label, '' AS content, '' AS plain_text,
             word_count, source_revision, created_at
-     FROM chapter_versions WHERE chapter_id = ? ORDER BY created_at DESC LIMIT 200`,
+     FROM chapter_versions WHERE chapter_id = ?
+       ${cursor ? "AND (created_at < ? OR (created_at = ? AND id < ?))" : ""}
+     ORDER BY created_at DESC, id DESC LIMIT ?`,
     chapterId,
+    ...(cursor ? [cursor.createdAt, cursor.createdAt, cursor.id] : []),
+    input.limit + 1,
   );
-  return rows.map((row) => mapVersion(row));
+  const hasMore = rows.length > input.limit;
+  const page = rows.slice(0, input.limit);
+  return {
+    data: page.map((row) => mapVersion(row)),
+    pagination: {
+      hasMore,
+      nextCursor: hasMore ? encodeVersionCursor(page[page.length - 1]) : null,
+    },
+  };
 }
 
 export async function getVersion(versionId: string, ownerId: string) {

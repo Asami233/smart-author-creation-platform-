@@ -60,6 +60,11 @@ export const createManualVersionSchema = z.object({
   label: requiredText(80),
 });
 
+export const listVersionsQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(200).default(200),
+  cursor: z.string().min(1).max(300).optional(),
+});
+
 export const restoreVersionSchema = z.object({
   expectedRevision: z.number().int().min(1).optional(),
 });
@@ -114,6 +119,20 @@ export const chapterLinkSchema = z.object({
   entityType: z.enum(["character", "world", "timeline", "outline"]),
   entityId: idSchema,
 });
+
+export const chapterLinksBatchSchema = z.object({
+  links: z.array(chapterLinkSchema).min(1).max(100),
+}).refine(
+  ({ links }) => new Set(links.map((link) => `${link.entityType}:${link.entityId}`)).size === links.length,
+  "关联列表不能包含重复对象",
+);
+
+export const reorderOutlinesSchema = z.object({
+  outlineIds: z.array(idSchema).min(1).max(500),
+}).refine(
+  ({ outlineIds }) => new Set(outlineIds).size === outlineIds.length,
+  "大纲排序列表不能包含重复条目",
+);
 
 export const updateWritingGoalSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
