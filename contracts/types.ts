@@ -53,6 +53,26 @@ export type Volume = {
   updatedAt: string;
 };
 
+export type WritingDayStats = {
+  date: string;
+  targetWords: number;
+  wordsWritten: number;
+};
+
+export type WorkStats = {
+  totalWords: number;
+  targetWords: number;
+  chapterCount: number;
+  completedChapterCount: number;
+  streakDays: number;
+  timeZone: "Asia/Shanghai";
+  today: string;
+  todayWordsWritten: number;
+  /** Null means no daily record; zero is an explicitly unlimited daily goal. */
+  todayTargetWords: number | null;
+  daily: WritingDayStats[];
+};
+
 export type Chapter = {
   id: string;
   workId: string;

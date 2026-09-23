@@ -72,6 +72,57 @@ try {
   const chapterId = first.chapters[0].id;
   const otherVolumeId = second.volumes[0].id;
 
+  const extraVolume = data(await request("POST", `/api/works/${workId}/volumes`, {
+    title: "排序测试第二卷",
+  }), 201);
+  await request("POST", `/api/works/${workId}/chapters`, {
+    title: "第二卷测试章", volumeId: extraVolume.id, content: "<p>第二卷正文</p>",
+  }).then((result) => data(result, 201));
+  const volumeOrderPath = `/api/works/${workId}/volumes/reorder`;
+  const volumeIds = [extraVolume.id, first.volumes[0].id];
+  const chapterBeforeOrder = data(await request("GET", `/api/chapters/${chapterId}`));
+  const volumeOrder = data(await request("POST", volumeOrderPath, { volumeIds }));
+  assert.deepEqual(volumeOrder.map((volume) => volume.id), volumeIds);
+  assert.deepEqual(volumeOrder.map((volume) => volume.sortOrder), [0, 1]);
+  assert.deepEqual(data(await request("GET", `/api/works/${workId}`)).volumes.map((volume) => volume.id), volumeIds);
+  assert.deepEqual(data(await request("GET", `/api/chapters/${chapterId}`)), chapterBeforeOrder,
+    "分卷排序不能更改正文、归属或章节修订号");
+  const orderedWorkTimestamp = data(await request("GET", `/api/works/${workId}`)).work.updatedAt;
+  assert.equal(orderedWorkTimestamp, volumeOrder[0].updatedAt);
+  for (const [invalidIds, status] of [
+    [[], 400], [[volumeIds[0], volumeIds[0]], 400], [["invalid"], 400],
+    [[volumeIds[0]], 409], [[volumeIds[0], otherVolumeId], 409],
+    [[volumeIds[0], crypto.randomUUID()], 409],
+  ]) {
+    assert.equal((await request("POST", volumeOrderPath, { volumeIds: invalidIds })).status, status);
+    const unchanged = data(await request("GET", `/api/works/${workId}`));
+    assert.deepEqual(unchanged.volumes.map((volume) => volume.id), volumeIds);
+    assert.equal(unchanged.work.updatedAt, orderedWorkTimestamp, "拒绝的排序不能更新作品时间");
+  }
+  const concurrentOrders = await Promise.all([
+    request("POST", volumeOrderPath, { volumeIds }),
+    request("POST", volumeOrderPath, { volumeIds: [...volumeIds].reverse() }),
+  ]);
+  concurrentOrders.forEach((result) => data(result));
+  const afterConcurrent = data(await request("GET", `/api/works/${workId}/volumes`));
+  assert.deepEqual(afterConcurrent.map((volume) => volume.sortOrder), [0, 1]);
+  assert.equal(new Set(afterConcurrent.map((volume) => volume.id)).size, 2);
+  data(await request("POST", volumeOrderPath, { volumeIds }));
+
+  const emptyStats = data(await request("GET", `/api/works/${workId}/stats`));
+  assert.equal(emptyStats.timeZone, "Asia/Shanghai");
+  assert.match(emptyStats.today, /^\d{4}-\d{2}-\d{2}$/);
+  assert.equal(emptyStats.todayWordsWritten, 0);
+  assert.equal(emptyStats.todayTargetWords, null);
+  const goalStats = data(await request("PUT", `/api/works/${workId}/stats`, {
+    date: emptyStats.today, targetWords: 0,
+  }));
+  assert.equal(goalStats.todayTargetWords, 0);
+  assert.equal((await request("PUT", `/api/works/${workId}/stats`, {
+    date: "2026-02-31", targetWords: 500,
+  })).status, 400);
+  assert.equal(data(await request("GET", `/api/works/${second.work.id}/stats`)).todayTargetWords, null);
+
   assert.equal((await request("POST", `/api/works/${workId}/knowledge/outlines`, {
     scopeType: "volume", scopeId: otherVolumeId, title: "错误的跨作品大纲",
   })).status, 409);
@@ -151,6 +202,9 @@ try {
     content: "<p>新稿正文更长</p>", expectedRevision: oldChapter.revision,
   }));
   const statsBeforeRestore = data(await request("GET", `/api/works/${workId}/stats`));
+  assert.ok(statsBeforeRestore.todayWordsWritten > 0);
+  assert.equal(statsBeforeRestore.todayTargetWords, 0, "正文保存应保留用户设置的零目标");
+  assert.equal(statsBeforeRestore.streakDays, 1);
   assert.equal((await request("POST", `/api/chapter-versions/${manual.id}/restore`, {
     expectedRevision: oldChapter.revision,
   })).status, 409);
@@ -184,7 +238,11 @@ try {
     const exported = await request("GET", `/api/works/${workId}/export?format=${format}`);
     assert.equal(exported.status, 200);
     assert.ok(exported.bytes.length > 20);
-    if (format === "txt") assert.ok(new TextDecoder().decode(exported.bytes).includes("旧稿正文"));
+    if (format === "txt") {
+      const text = new TextDecoder().decode(exported.bytes);
+      assert.ok(text.includes("旧稿正文"));
+      assert.ok(text.indexOf(extraVolume.title) < text.indexOf(first.volumes[0].title), "导出必须遵循新分卷顺序");
+    }
     if (format === "docx") assert.deepEqual([...exported.bytes.slice(0, 2)], [0x50, 0x4b]);
     if (format === "pdf") assert.equal(new TextDecoder().decode(exported.bytes.slice(0, 4)), "%PDF");
   }
@@ -197,6 +255,12 @@ try {
   const preservedOutline = data(await request("GET", `/api/knowledge/outlines/${outline.id}`));
   assert.equal(preservedOutline.scopeType, "work");
   assert.equal(preservedOutline.scopeId, null);
+  assert.equal((await request("POST", volumeOrderPath, { volumeIds })).status, 409, "删除分卷后的旧列表应拒绝");
+  assert.equal(data(await request("GET", `/api/chapters/${chapterId}`)).volumeId, null);
+  assert.equal((await request("DELETE", `/api/works/${second.work.id}`)).status, 204);
+  assert.equal((await request("POST", `/api/works/${second.work.id}/volumes/reorder`, {
+    volumeIds: [otherVolumeId],
+  })).status, 404);
   console.log("Knowledge, version, export, and trash smoke passed");
 } finally {
   cleanupLocalAccount();

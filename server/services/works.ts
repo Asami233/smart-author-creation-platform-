@@ -5,7 +5,7 @@ import type {
   UpdateWorkInput,
 } from "@/contracts";
 import { all, batch, first, run, statement } from "@/server/db";
-import { notFound } from "@/server/errors";
+import { conflict, notFound } from "@/server/errors";
 import { isoNow, newId } from "@/server/text";
 
 type WorkRow = {
@@ -174,6 +174,13 @@ export async function createWork(ownerId: string, input: CreateWorkInput) {
 
 export async function getWorkspace(workId: string, ownerId: string) {
   const work = await assertWorkOwned(workId, ownerId);
+  return workspaceSnapshot(work);
+}
+
+// Only callers holding an owner-checked row may build a response. In particular,
+// an archive write returns its own row instead of reopening archived GET access.
+async function workspaceSnapshot(work: WorkRow) {
+  const workId = work.id;
   const [volumeRows, chapterRows] = await Promise.all([
     all<VolumeRow>(
       `SELECT id, work_id, title, summary, sort_order, created_at, updated_at
@@ -202,7 +209,11 @@ export async function getWorkspace(workId: string, ownerId: string) {
 }
 
 export async function updateWork(workId: string, ownerId: string, input: UpdateWorkInput) {
-  await assertWorkOwned(workId, ownerId);
+  const updated = await writeWorkUpdate(workId, ownerId, input);
+  return workspaceSnapshot(updated);
+}
+
+async function writeWorkUpdate(workId: string, ownerId: string, input: UpdateWorkInput): Promise<WorkRow> {
   const columns: string[] = [];
   const values: unknown[] = [];
   const add = (column: string, value: unknown) => {
@@ -215,33 +226,32 @@ export async function updateWork(workId: string, ownerId: string, input: UpdateW
   if (input.genre !== undefined) add("genre", input.genre);
   if (input.targetWords !== undefined) add("target_words", input.targetWords);
   if (input.status !== undefined) add("status", input.status);
-  add("updated_at", isoNow());
-
-  await run(
-    `UPDATE works SET ${columns.join(", ")} WHERE id = ? AND owner_id = ?`,
-    ...values,
-    workId,
-    ownerId,
-  );
-  return getWorkspace(workId, ownerId);
+  const now = isoNow();
+  add("updated_at", now);
+  const statements = [statement(
+    `UPDATE works SET ${columns.join(", ")}
+     WHERE id = ? AND owner_id = ? AND status != 'archived'
+     RETURNING id, title, description, genre, status, target_words, created_at, updated_at`,
+    ...values, workId, ownerId,
+  )];
+  if (input.status === "archived") {
+    // Same transaction as the guarded write: do not leave an archived active
+    // selection, and do not clear another work or touch preferences on failure.
+    statements.push(statement(
+      `UPDATE workspace_preferences
+       SET active_work_id = NULL, active_chapter_id = NULL, updated_at = ?
+       WHERE owner_id = ? AND active_work_id = ? AND changes() = 1`,
+      now, ownerId, workId,
+    ));
+  }
+  const [result] = await batch(statements);
+  const updated = result.results[0] as WorkRow | undefined;
+  if (!updated) notFound("作品");
+  return updated;
 }
 
 export async function archiveWork(workId: string, ownerId: string): Promise<void> {
-  await assertWorkOwned(workId, ownerId);
-  await run(
-    "UPDATE works SET status = 'archived', updated_at = ? WHERE id = ? AND owner_id = ?",
-    isoNow(),
-    workId,
-    ownerId,
-  );
-  await run(
-    `UPDATE workspace_preferences
-     SET active_work_id = NULL, active_chapter_id = NULL, updated_at = ?
-     WHERE owner_id = ? AND active_work_id = ?`,
-    isoNow(),
-    ownerId,
-    workId,
-  );
+  await writeWorkUpdate(workId, ownerId, { status: "archived" });
 }
 
 export async function getWorkspaceDashboard(ownerId: string) {
@@ -327,6 +337,41 @@ export async function listVolumes(workId: string, ownerId: string) {
     workId,
   );
   return rows.map(mapVolume);
+}
+
+export async function reorderVolumes(workId: string, ownerId: string, volumeIds: string[]) {
+  await assertWorkOwned(workId, ownerId);
+  if (!volumeIds.length || new Set(volumeIds).size !== volumeIds.length) {
+    conflict("分卷排序列表必须包含当前作品全部分卷且不得重复");
+  }
+  const ids = JSON.stringify(volumeIds);
+  const now = isoNow();
+  const [result] = await batch([
+    statement(
+      `UPDATE volumes
+       SET sort_order = (SELECT CAST(key AS INTEGER) FROM json_each(?) WHERE value = volumes.id),
+           updated_at = ?
+       WHERE work_id = ?
+         AND (SELECT COUNT(*) FROM volumes WHERE work_id = ?) = ?
+         AND (SELECT COUNT(*) FROM volumes WHERE work_id = ?
+              AND id IN (SELECT value FROM json_each(?))) = ?
+         AND EXISTS (SELECT 1 FROM works WHERE id = ? AND owner_id = ? AND status != 'archived')
+       RETURNING id, work_id, title, summary, sort_order, created_at, updated_at`,
+      ids, now, workId, workId, volumeIds.length, workId, ids, volumeIds.length, workId, ownerId,
+    ),
+    // D1 batch executes sequentially in one transaction. changes() refers to
+    // the preceding UPDATE, so a rejected list cannot alter the work timestamp.
+    statement(
+      "UPDATE works SET updated_at = ? WHERE id = ? AND owner_id = ? AND changes() = ?",
+      now, workId, ownerId, volumeIds.length,
+    ),
+  ]);
+  const rows = result.results as VolumeRow[];
+  if (rows.length !== volumeIds.length) {
+    await assertWorkOwned(workId, ownerId);
+    conflict("分卷列表已变化，请刷新后提交当前作品的全部分卷");
+  }
+  return rows.sort((a, b) => a.sort_order - b.sort_order).map(mapVolume);
 }
 
 export async function createVolume(workId: string, ownerId: string, input: CreateVolumeInput) {

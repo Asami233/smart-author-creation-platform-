@@ -2,6 +2,8 @@ import { all, batch, first, statement } from "@/server/db";
 import { AppError } from "@/server/errors";
 import { isoNow, newId } from "@/server/text";
 import { assertWorkOwned } from "./works";
+import type { WorkStats, WritingDayStats } from "@/contracts";
+import { summarizeWritingDays } from "@/server/writing-stats";
 
 export async function searchWork(workId: string, ownerId: string, rawQuery: string) {
   await assertWorkOwned(workId, ownerId);
@@ -57,8 +59,9 @@ export async function searchWork(workId: string, ownerId: string, rawQuery: stri
   }));
 }
 
-export async function getWorkStats(workId: string, ownerId: string) {
+export async function getWorkStats(workId: string, ownerId: string): Promise<WorkStats> {
   const work = await assertWorkOwned(workId, ownerId);
+  const now = new Date();
   const [summary, daily] = await Promise.all([
     first<{ total_words: number; chapter_count: number; completed_count: number }>(
       `SELECT COALESCE(SUM(word_count), 0) AS total_words,
@@ -67,35 +70,20 @@ export async function getWorkStats(workId: string, ownerId: string) {
        FROM chapters WHERE work_id = ? AND deleted_at IS NULL`,
       workId,
     ),
-    all<{ stat_date: string; target_words: number; words_written: number }>(
-      `SELECT stat_date, target_words, words_written
+    all<WritingDayStats>(
+      `SELECT stat_date AS date, target_words AS targetWords, words_written AS wordsWritten
        FROM writing_daily_stats WHERE work_id = ?
-       ORDER BY stat_date DESC LIMIT 90`,
+       ORDER BY stat_date DESC`,
       workId,
     ),
   ]);
-
-  let streakDays = 0;
-  const activeDates = new Set(daily.filter((item) => item.words_written > 0).map((item) => item.stat_date));
-  const cursor = new Date();
-  for (let index = 0; index < 366; index += 1) {
-    const date = cursor.toISOString().slice(0, 10);
-    if (!activeDates.has(date)) break;
-    streakDays += 1;
-    cursor.setUTCDate(cursor.getUTCDate() - 1);
-  }
 
   return {
     totalWords: summary?.total_words ?? 0,
     targetWords: work.target_words,
     chapterCount: summary?.chapter_count ?? 0,
     completedChapterCount: summary?.completed_count ?? 0,
-    streakDays,
-    daily: daily.map((item) => ({
-      date: item.stat_date,
-      targetWords: item.target_words,
-      wordsWritten: item.words_written,
-    })),
+    ...summarizeWritingDays(daily, now),
   };
 }
 

@@ -1,7 +1,8 @@
 import { all, batch, first, statement } from "@/server/db";
+import { chapterReturningColumns, chapterWriteGuard } from "@/server/chapter-write";
 import { AppError, conflict, notFound } from "@/server/errors";
 import { countWords, htmlToPlainText, isoNow, newId } from "@/server/text";
-import { getChapter, getChapterRow } from "./chapters";
+import { getChapterRow, mapChapter, type ChapterRow } from "./chapters";
 
 type VersionRow = {
   id: string;
@@ -123,18 +124,18 @@ export async function restoreVersion(versionId: string, ownerId: string, expecte
   const wordCount = countWords(plainText);
   const now = isoNow();
   const saveId = newId();
+  const guard = chapterWriteGuard(current.id, current.revision, ownerId);
   const statements = [
     statement(
       `UPDATE chapters SET content = ?, plain_text = ?, word_count = ?,
        revision = revision + 1, last_save_id = ?, updated_at = ?
-       WHERE id = ? AND revision = ? AND deleted_at IS NULL`,
+       WHERE ${guard.sql} RETURNING ${chapterReturningColumns}`,
       content,
       plainText,
       wordCount,
       saveId,
       now,
-      current.id,
-      current.revision,
+      ...guard.bindings,
     ),
     statement(
       `INSERT INTO chapter_versions
@@ -163,8 +164,9 @@ export async function restoreVersion(versionId: string, ownerId: string, expecte
   ];
   // Restoring existing prose changes total words but is not new writing toward today's goal.
   const results = await batch(statements);
-  if ((results[0]?.meta?.changes ?? 0) === 0) {
+  const updated = results[0]?.results[0] as ChapterRow | undefined;
+  if (!updated) {
     conflict("章节恢复时发生版本冲突，请刷新后重试");
   }
-  return getChapter(current.id, ownerId);
+  return mapChapter(updated);
 }

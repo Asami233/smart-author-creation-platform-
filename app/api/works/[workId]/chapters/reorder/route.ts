@@ -14,6 +14,7 @@ export async function POST(request: Request, { params }: Context) {
       await ownerIdForRequest(request),
       input.volumeId,
       input.chapterIds,
+      input.expectedRevisions,
     );
   });
 }

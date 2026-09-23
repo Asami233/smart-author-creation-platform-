@@ -12,6 +12,9 @@ export const createWorkSchema = z.object({
   targetWords: z.number().int().min(0).max(20_000_000).default(0),
 });
 
+// PATCH accepts archive for compatibility: returns HTTP 200 with the updated
+// workspace snapshot. Archived works remain inaccessible to ordinary reads or
+// updates; restoration must use the trash restore endpoint. DELETE returns 204.
 export const updateWorkSchema = createWorkSchema
   .partial()
   .extend({ status: z.enum(["draft", "completed", "archived"]).optional() })
@@ -27,6 +30,13 @@ export const updateVolumeSchema = createVolumeSchema
   .partial()
   .refine((value) => Object.keys(value).length > 0, "至少提供一个要修改的字段");
 
+export const reorderVolumesSchema = z.object({
+  volumeIds: z.array(idSchema).min(1).max(500),
+}).refine(
+  ({ volumeIds }) => new Set(volumeIds).size === volumeIds.length,
+  "分卷排序列表不能包含重复条目",
+);
+
 export const createChapterSchema = z.object({
   volumeId: idSchema.nullable().optional(),
   title: requiredText(160),
@@ -36,6 +46,9 @@ export const createChapterSchema = z.object({
   sortOrder: z.number().int().min(0).optional(),
 });
 
+// Save responses describe this write's committed row, not a later reread.
+// The server rechecks live work ownership, revision, deletion and explicit
+// target-volume validity in the UPDATE. A changed write-time state is a 409.
 export const updateChapterSchema = z
   .object({
     volumeId: idSchema.nullable().optional(),
@@ -54,6 +67,26 @@ export const updateChapterSchema = z
 export const reorderChaptersSchema = z.object({
   volumeId: idSchema.nullable(),
   chapterIds: z.array(idSchema).min(1).max(500),
+  expectedRevisions: z.array(z.object({
+    chapterId: idSchema,
+    revision: z.number().int().min(1),
+  })).min(1).max(500).optional(),
+}).superRefine(({ chapterIds, expectedRevisions }, ctx) => {
+  const ids = new Set(chapterIds);
+  if (ids.size !== chapterIds.length) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["chapterIds"], message: "章节列表不能重复" });
+  }
+  if (expectedRevisions && (
+    expectedRevisions.length !== chapterIds.length
+    || new Set(expectedRevisions.map((item) => item.chapterId)).size !== chapterIds.length
+    || expectedRevisions.some((item) => !ids.has(item.chapterId))
+  )) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["expectedRevisions"],
+      message: "版本列表必须与章节列表一一对应且不得重复",
+    });
+  }
 });
 
 export const createManualVersionSchema = z.object({
@@ -135,7 +168,10 @@ export const reorderOutlinesSchema = z.object({
 );
 
 export const updateWritingGoalSchema = z.object({
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
+    const date = new Date(`${value}T00:00:00.000Z`);
+    return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+  }, "请提供有效的日历日期"),
   targetWords: z.number().int().min(0).max(100_000),
 });
 
@@ -185,6 +221,7 @@ export type CreateVolumeInput = z.infer<typeof createVolumeSchema>;
 export type UpdateVolumeInput = z.infer<typeof updateVolumeSchema>;
 export type CreateChapterInput = z.infer<typeof createChapterSchema>;
 export type UpdateChapterInput = z.infer<typeof updateChapterSchema>;
+export type ReorderChaptersInput = z.infer<typeof reorderChaptersSchema>;
 export type CreateOutlineInput = z.infer<typeof createOutlineSchema>;
 export type CreateCharacterInput = z.infer<typeof createCharacterSchema>;
 export type CreateWorldEntryInput = z.infer<typeof createWorldEntrySchema>;
