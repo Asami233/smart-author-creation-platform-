@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { BookMarked, Feather, LogIn, LogOut, Sparkles, User, UserCheck } from "lucide-react";
+import { BookMarked, Feather, LogIn, LogOut, Settings, Sparkles, User, UserCheck } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -90,6 +90,13 @@ export function UserMenu() {
           </div>
         </DropdownMenuGroup>
         <DropdownMenuSeparator className="bg-[#eeece7]" />
+        <DropdownMenuItem
+          onClick={() => router.push("/profile")}
+          className="text-xs text-[#48534e] hover:text-[#176b5b] hover:bg-[#eef3f0] cursor-pointer rounded-lg py-2"
+        >
+          <Settings className="w-3.5 h-3.5 mr-2 text-[#176b5b]" />
+          <span>作者主页与设置</span>
+        </DropdownMenuItem>
         <DropdownMenuItem
           onClick={() => router.push("/login")}
           className="text-xs text-[#48534e] hover:text-[#176b5b] hover:bg-[#eef3f0] cursor-pointer rounded-lg py-2"

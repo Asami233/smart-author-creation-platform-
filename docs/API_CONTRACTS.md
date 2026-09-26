@@ -194,6 +194,7 @@ PUT 的 date 必须为有效日历日期，例如 2026-02-31 返回 400；target
 | POST | `/api/settings/ai/models` | 使用用户填写或已保存的密钥获取供应商真实模型列表 |
 | POST | `/api/settings/ai/test` | 发出极小的真实模型请求，验证地址、密钥和模型 |
 | POST | `/api/ai/generate` | 生成建议，不修改正文 |
+| POST | `/api/ai/generate/stream` | 流式生成建议（SSE），不修改正文 |
 | GET | `/api/ai/usage` | 最近 30 天请求与 token 统计 |
 
 保存 AI 设置：
@@ -228,6 +229,36 @@ PUT 的 date 必须为有效日历日期，例如 2026-02-31 返回 400；target
 `action` 取值：`continue`、`rewrite`、`polish`、`outline`、`brainstorm`、`consistency`。
 
 后端只使用请求中明确提供的上下文，不会自动读取整部作品。AI 输出必须由前端展示为可接受或舍弃的建议，不能直接覆盖正文。
+
+### 流式生成（迭代 3，第 4 天）
+
+`POST /api/ai/generate/stream` 使用与 `/api/ai/generate` 完全相同的 JSON 请求体与校验规则。需要有效会话（本机开发环境沿用单作者身份），非同源写请求返回 `403 CROSS_SITE_REQUEST`。服务端仅使用已保存的加密 AI 配置，密钥不进入响应、浏览器或日志；不会额外读取整部作品。旧的一次性接口保留且响应不变。
+
+成功握手为 HTTP 200，`Content-Type: text/event-stream; charset=utf-8`、`Cache-Control: no-store, no-transform`。每个 SSE 帧的 `event` 等于 JSON `data.type`，正式类型见 `contracts/types.ts` 的 `AiStreamEvent`：
+
+```text
+event: start
+data: {"type":"start","requestId":"...","action":"continue","model":"...","contextBudget":{"estimatedInputTokens":420,"inputTokenLimit":14000,"requestedContextTokens":210,"includedContextTokens":210,"omittedCharacters":0,"truncatedSections":[],"selectedTextTooLong":false}}
+
+event: delta
+data: {"type":"delta","text":"一小段新增文本"}
+
+event: done
+data: {"type":"done","usage":{"inputTokens":null,"outputTokens":null},"contextSummary":{"chapterCount":1,"outlineCount":0,"characterCount":0,"worldEntryCount":0,"timelineEventCount":0}}
+
+event: error
+data: {"type":"error","code":"AI_STREAM_INTERRUPTED","message":"模型流式响应未完整结束"}
+```
+
+`done` 与 `error` 互斥；只有收到 `done` 的文本才是完整建议，才能启用“采纳”。上游某些兼容供应商不提供流式 token 用量，故 `usage` 可为 `null`。`requestId` 用于界面追踪一次请求，不是可重连游标，不支持 `EventSource` 自动重连。
+
+上下文预算采用前后端共用的保守估算：ASCII 约每 4 字符 1 Token，非 ASCII 每字符按 2 Token，估算总窗口 16,000 Token，扣除本次 `maxTokens` 后是输入预算。该值不是供应商模型的精确分词或窗口承诺，供应商仍可能拒绝超出其自身限制的请求。先完整保留用户选中的文本；选区本身放不下时，握手前返回 `400 AI_SELECTED_TEXT_TOO_LONG`，不向供应商发送截断选区。其余材料按“章节末尾 → 大纲 → 角色 → 世界观 → 时间线”顺序填入；章节保留末尾，其余条目保留开头，截断位置在提示词内标明。`start.contextBudget` 报告实际发送量与省略字数；前端发起前使用同一规划函数显示预计量和超限提示。
+
+`GET /api/ai/usage` 的 `requestCount` 现在表示当天已接受的生成尝试，包含用户取消和供应商失败；本地 100 次上限在请求供应商前原子占用名额，避免并发或连续取消绕过。`inputTokens` 与 `outputTokens` 仅累计完整结束且供应商明确报告的非负整数，**不是账单金额，也不能代表取消请求的实际供应商费用**。每个日记录新增 `requestCountMeaning: "attempts"` 与 `tokenCountMeaning: "provider_reported_on_completed_requests"`，原字段仍保留。改版前已有的历史 `requestCount` 按旧规则只统计成功请求，不回填无法推断的取消次数。
+
+用户停止生成时，浏览器中止 `fetch` 的 `AbortSignal`，服务端随之取消上游请求；没有独立的取消 API，也不保证取消后可收到 `error` 帧。预览中已到达的部分文本可以复制，但不得当成完整建议写入正文。新请求或切换作品/章节须取消旧请求并隔离旧片段。
+
+握手前的参数、鉴权、配置和供应商 HTTP 错误沿用 `{ "error": { "code", "message" } }` JSON 非 200 响应（例如 400/401/403/429/502/504）；握手后发生的断流、超时、格式错误以 `error` 帧结束，HTTP 状态仍为 200。绝不把供应商原始错误正文或 API Key 透传。兼容标准 SSE、分块 CRLF、文本数组、以 `finish_reason` 收尾而不发 `[DONE]` 的响应，以及供应商直接返回的非流式 `application/json` 完成结果。流式代理总时限 120 秒、单帧 100 万字符、总输出 20 万字符；超过上限以安全错误终止。
 
 ## 邮箱认证
 

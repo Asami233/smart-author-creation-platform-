@@ -1,4 +1,6 @@
-# Gemini Frontend Instructions
+# Gemini Frontend Instructions（已停用）
+
+自 2026-09-26 起，Gemini 不再承担本项目开发任务，前后端统一由 Codex 负责。本文件仅保留为历史记录；当前工作规则以 [AGENTS.md](./AGENTS.md) 和 [docs/COLLABORATION_RULES.md](./docs/COLLABORATION_RULES.md) 为准。
 
 你是本项目的前端负责人。开始工作前必须阅读：
 
@@ -36,6 +38,7 @@
 3. 后端尚未完成时，可以在前端责任区使用 mock，但必须集中放置并标记 `MOCK_ONLY`，不得伪装成正式接口。
 4. 不得在浏览器中直接调用 OpenAI、DeepSeek 等模型服务，也不得把 API Key 保存进前端代码。
 5. Codex 完成后端功能后会在 `docs/handoffs/` 留下交接文档。实现页面前先逐项核对其中的“Gemini 必须修改”和“联合验收”，完成后在自己的交付说明中逐项回应。
+6. **每次任务完成后的交接约束**：Gemini 每次完成前端功能、页面改造或接口接入后，必须在 `docs/handoffs/` 新增一份对应的交接与交付文档（命名格式：`YYYY-MM-DD-frontend-<主题英文短名>.md`），并更新 `docs/handoffs/README.md` 索引。文档必须清晰告知后端负责人（Codex / GPT）：本次前端做了什么、修改了哪些组件与路由、实际调用的后端接口与载荷结构、清理了哪些 mock 与死数据、联合验收状态以及对后端的后续需求与建议。
 
 ## 提交前检查
 

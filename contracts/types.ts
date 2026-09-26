@@ -113,4 +113,25 @@ export type AiGenerationResult = {
     worldEntryCount: number;
     timelineEventCount: number;
   };
+  contextBudget?: AiContextBudget;
 };
+
+export type AiContextSection = "selectedText" | "chapters" | "outlines" | "characters" | "worldEntries" | "timelineEvents";
+
+export type AiContextBudget = {
+  /** Conservative cross-provider estimate, not a tokenizer or a model context-window guarantee. */
+  estimatedInputTokens: number;
+  inputTokenLimit: number;
+  requestedContextTokens: number;
+  includedContextTokens: number;
+  omittedCharacters: number;
+  truncatedSections: AiContextSection[];
+  selectedTextTooLong: boolean;
+};
+
+/** POST /api/ai/generate/stream 的 SSE data；event 名与 type 相同。 */
+export type AiStreamEvent =
+  | { type: "start"; requestId: string; action: AiAction; model: string; contextBudget: AiContextBudget }
+  | { type: "delta"; text: string }
+  | { type: "done"; usage: AiGenerationResult["usage"]; contextSummary: AiGenerationResult["contextSummary"] }
+  | { type: "error"; code: string; message: string };

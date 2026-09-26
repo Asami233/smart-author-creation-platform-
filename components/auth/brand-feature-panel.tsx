@@ -6,14 +6,14 @@ export function BrandFeaturePanel() {
   return (
     <div className="relative hidden lg:flex flex-col justify-between p-10 xl:p-12 overflow-hidden rounded-3xl bg-gradient-to-br from-[#1b4338] via-[#173a31] to-[#0f2721] text-emerald-50 border border-emerald-900/40 shadow-2xl">
       {/* 典雅的东方水墨光晕装饰 */}
-      <div className="pointer-events-none absolute -right-20 -top-20 h-96 w-96 rounded-full bg-emerald-500/10 blur-3xl" />
-      <div className="pointer-events-none absolute -left-20 -bottom-20 h-80 w-80 rounded-full bg-teal-400/10 blur-3xl" />
-      <div className="pointer-events-none absolute top-1/2 left-1/3 h-64 w-64 rounded-full bg-emerald-600/5 blur-2xl" />
+      <div className="pointer-events-none absolute -right-20 -top-20 h-96 w-96 rounded-full bg-emerald-500/15 blur-3xl animate-ink-pulse-glow" />
+      <div className="pointer-events-none absolute -left-20 -bottom-20 h-80 w-80 rounded-full bg-teal-400/15 blur-3xl animate-ink-drift" />
+      <div className="pointer-events-none absolute top-1/2 left-1/3 h-64 w-64 rounded-full bg-emerald-600/10 blur-2xl animate-ink-pulse-glow" />
 
       {/* 顶部品牌与徽章 */}
       <div className="relative z-10">
         <div className="flex items-center gap-3.5">
-          <div className="w-11 h-11 rounded-xl bg-gradient-to-b from-emerald-400 to-teal-600 flex items-center justify-center font-serif text-2xl font-bold text-white shadow-lg shadow-emerald-950/40 border border-emerald-300/30">
+          <div className="w-11 h-11 rounded-xl bg-gradient-to-b from-emerald-400 to-teal-600 flex items-center justify-center font-serif text-2xl font-bold text-white shadow-lg shadow-emerald-950/40 border border-emerald-300/30 animate-ink-float">
             砚
           </div>
           <div>

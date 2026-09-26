@@ -1,6 +1,7 @@
 ﻿param(
     [switch]$SkipInstall,
-    [switch]$SkipBuild
+    [switch]$SkipBuild,
+    [switch]$PauseWhenAlreadyRunning
 )
 
 $ErrorActionPreference = 'Stop'
@@ -36,12 +37,59 @@ function Resolve-CommandPath {
     return $command.Source
 }
 
-try {
-    $npmPath = Resolve-CommandPath -Name 'npm.cmd' -PreferredPath 'D:\nodejs\npm.cmd'
-    $nodePath = Resolve-CommandPath -Name 'node.exe' -PreferredPath 'D:\nodejs\node.exe'
+function Get-ExistingDevServer {
+    $lockPath = Join-Path $projectRoot '.vinext\dev\lock.json'
+    if (-not (Test-Path -LiteralPath $lockPath)) {
+        return $null
+    }
 
+    try {
+        $server = Get-Content -Raw -LiteralPath $lockPath | ConvertFrom-Json
+        $serverUri = [Uri]::new([string]$server.appUrl)
+        $serverProcessId = [int]$server.pid
+    }
+    catch {
+        # Let vinext handle an invalid or stale lock file when starting normally.
+        return $null
+    }
+
+    if (-not [string]::Equals([string]$server.cwd, $projectRoot, [StringComparison]::OrdinalIgnoreCase) -or
+        $serverProcessId -le 0 -or
+        $serverUri.Port -ne 5173 -or
+        $serverUri.Host -notin @('localhost', '127.0.0.1', '::1')) {
+        return $null
+    }
+
+    if (-not (Get-Process -Id $serverProcessId -ErrorAction SilentlyContinue)) {
+        return $null
+    }
+
+    $listener = Get-NetTCPConnection -LocalPort $serverUri.Port -State Listen -ErrorAction SilentlyContinue |
+        Where-Object { $_.OwningProcess -eq $serverProcessId } |
+        Select-Object -First 1
+    if (-not $listener) {
+        throw "检测到开发进程 $serverProcessId，但端口 $($serverUri.Port) 尚未就绪。请稍后重试；若进程已卡住，再手动停止它。"
+    }
+
+    return $server
+}
+
+try {
     Write-Host '智能作者创作平台 - 本地开发启动器' -ForegroundColor Cyan
     Write-Host "项目目录：$projectRoot"
+
+    $existingServer = Get-ExistingDevServer
+    if ($existingServer) {
+        Write-Host "开发服务器已在运行：$($existingServer.appUrl)（PID：$($existingServer.pid)）。" -ForegroundColor Green
+        Write-Host '无需重复构建或启动；如需重启，请先在原窗口按 Ctrl+C。'
+        if ($PauseWhenAlreadyRunning) {
+            $null = Read-Host '按 Enter 关闭此窗口'
+        }
+        exit 0
+    }
+
+    $npmPath = Resolve-CommandPath -Name 'npm.cmd' -PreferredPath 'D:\nodejs\npm.cmd'
+    $nodePath = Resolve-CommandPath -Name 'node.exe' -PreferredPath 'D:\nodejs\node.exe'
 
     $vinextPath = Join-Path $projectRoot 'node_modules\.bin\vinext.cmd'
     if (-not $SkipInstall -and -not (Test-Path -LiteralPath $vinextPath)) {

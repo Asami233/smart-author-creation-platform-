@@ -1,23 +1,32 @@
-// MOCK_ONLY: 待 Codex 提供正式 contracts/** 和后端 API 路由后，本模块将替换为真实的 API 请求调用。
 "use client";
 
 import { useEffect, useState, useSyncExternalStore } from "react";
+import type { AuthUser } from "@/contracts/auth";
 
 export type AuthorUser = {
   id: string;
-  penName: string; // 作家笔名
-  account: string; // 手机号/邮箱/账号
+  email: string;
+  penName: string;
+  account: string; // 兼容原有组件显示
   avatarText: string;
-  avatarBg?: string;
+  avatarUrl?: string | null;
   bio?: string;
   createdWorksCount?: number;
   totalWordsCount?: number;
 };
 
+export type VerificationResult = {
+  accepted: true;
+  expiresInSeconds: number;
+  retryAfterSeconds: number;
+  devCode?: string;
+};
+
 const AUTH_STORAGE_KEY = "smart-author-auth-user";
 
 const DEFAULT_GUEST_USER: AuthorUser = {
-  id: "author-default-01",
+  id: "guest-author-01",
+  email: "shenyan@author.studio",
   penName: "沈砚",
   account: "shenyan@author.studio",
   avatarText: "沈",
@@ -26,13 +35,29 @@ const DEFAULT_GUEST_USER: AuthorUser = {
   totalWordsCount: 28540,
 };
 
-// 简单的事件发布订阅器，支持跨组件和多标签页响应登录状态变更
 type AuthListener = () => void;
 const listeners = new Set<AuthListener>();
 
 function notifyAuthChange() {
   listeners.forEach((listener) => listener());
 }
+
+function normalizeUser(user: AuthUser, extra?: { worksCount?: number }): AuthorUser {
+  return {
+    id: user.id,
+    email: user.email,
+    penName: user.penName,
+    account: user.email,
+    avatarText: user.penName ? user.penName.charAt(0).toUpperCase() : "墨",
+    avatarUrl: user.avatarUrl,
+    bio: user.bio,
+    createdWorksCount: extra?.worksCount ?? 1,
+    totalWordsCount: 28540,
+  };
+}
+
+let cachedUser: AuthorUser | null | undefined = undefined;
+let isSessionChecked = false;
 
 function getStoredUser(): AuthorUser | null {
   if (typeof window === "undefined") return null;
@@ -44,8 +69,6 @@ function getStoredUser(): AuthorUser | null {
     return null;
   }
 }
-
-let cachedUser: AuthorUser | null | undefined = undefined;
 
 function getSnapshot(): AuthorUser | null {
   if (cachedUser === undefined) {
@@ -73,76 +96,160 @@ function subscribe(listener: AuthListener) {
   };
 }
 
+async function handleApiResponse<T>(res: Response): Promise<T> {
+  const json = (await res.json().catch(() => ({}))) as {
+    error?: { code?: string; message?: string };
+    data?: T;
+  };
+  if (!res.ok) {
+    const errorMsg = json?.error?.message || `请求失败 (${res.status})`;
+    const err = new Error(errorMsg);
+    (err as unknown as { code?: string }).code = json?.error?.code;
+    throw err;
+  }
+  return json.data as T;
+}
+
 export const authService = {
   getCurrentUser(): AuthorUser | null {
     return getSnapshot();
   },
 
-  // 密码登录
-  async loginWithPassword(account: string, _password: string): Promise<AuthorUser> {
-    await new Promise((resolve) => setTimeout(resolve, 600)); // 模拟网络延迟
-    const user: AuthorUser = {
-      id: `author-${Date.now()}`,
-      penName: account.includes("@") ? account.split("@")[0] : account.slice(-4) ? `作者_${account.slice(-4)}` : "当代文豪",
-      account,
-      avatarText: account.charAt(0).toUpperCase(),
-      bio: "专注写作，落笔生花。",
-      createdWorksCount: 1,
-      totalWordsCount: 12400,
-    };
-    if (typeof window !== "undefined") {
-      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(user));
+  async checkSession(): Promise<AuthorUser | null> {
+    if (typeof window === "undefined") return null;
+    try {
+      const res = await fetch("/api/auth/session", {
+        method: "GET",
+        credentials: "include",
+      });
+      const data = await handleApiResponse<{ authenticated: boolean; user: AuthUser | null }>(res);
+      if (data.authenticated && data.user) {
+        const normalized = normalizeUser(data.user);
+        cachedUser = normalized;
+        localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(normalized));
+        notifyAuthChange();
+        return normalized;
+      }
+      // 如果服务端未登录且不是离线游客，则清理本地缓存
+      const current = getStoredUser();
+      if (current && !current.id.startsWith("guest-")) {
+        cachedUser = null;
+        localStorage.removeItem(AUTH_STORAGE_KEY);
+        notifyAuthChange();
+      }
+      return cachedUser ?? null;
+    } catch {
+      return getSnapshot();
+    } finally {
+      isSessionChecked = true;
     }
-    cachedUser = user;
-    notifyAuthChange();
-    return user;
   },
 
-  // 手机/邮箱验证码登录
-  async loginWithCode(phoneOrEmail: string, _code: string): Promise<AuthorUser> {
-    await new Promise((resolve) => setTimeout(resolve, 600));
-    const user: AuthorUser = {
-      id: `author-${Date.now()}`,
-      penName: phoneOrEmail.includes("@")
-        ? phoneOrEmail.split("@")[0]
-        : `墨客${phoneOrEmail.slice(-4)}`,
-      account: phoneOrEmail,
-      avatarText: "墨",
-      bio: "落墨成卷，字字珠玑。",
-      createdWorksCount: 1,
-      totalWordsCount: 5200,
-    };
+  // 1. 邮箱密码登录
+  async loginWithPassword(email: string, password: string): Promise<AuthorUser> {
+    const res = await fetch("/api/auth/login/password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ email: email.trim(), password }),
+    });
+    const data = await handleApiResponse<{ authenticated: boolean; user: AuthUser }>(res);
+    const authorUser = normalizeUser(data.user);
     if (typeof window !== "undefined") {
-      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(user));
+      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(authorUser));
     }
-    cachedUser = user;
+    cachedUser = authorUser;
     notifyAuthChange();
-    return user;
+    return authorUser;
   },
 
-  // 注册新作者
-  async register(penName: string, account: string, _password: string): Promise<AuthorUser> {
-    await new Promise((resolve) => setTimeout(resolve, 700));
-    const user: AuthorUser = {
-      id: `author-${Date.now()}`,
-      penName: penName.trim() || "新晋作者",
-      account,
-      avatarText: penName.trim() ? penName.trim().charAt(0) : "作",
-      bio: "初入江湖，愿以此笔载山海。",
-      createdWorksCount: 0,
-      totalWordsCount: 0,
-    };
-    if (typeof window !== "undefined") {
-      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(user));
-    }
-    cachedUser = user;
-    notifyAuthChange();
-    return user;
+  // 2. 邮箱验证码登录 - 发送验证码
+  async startEmailLoginCode(email: string): Promise<VerificationResult> {
+    const res = await fetch("/api/auth/login/code/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ email: email.trim() }),
+    });
+    return handleApiResponse<VerificationResult>(res);
   },
 
-  // 游客/体验账号登录
+  // 3. 邮箱验证码登录 - 验证并登录
+  async verifyEmailLoginCode(email: string, code: string): Promise<AuthorUser> {
+    const res = await fetch("/api/auth/login/code/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ email: email.trim(), code: code.trim() }),
+    });
+    const data = await handleApiResponse<{ authenticated: boolean; user: AuthUser }>(res);
+    const authorUser = normalizeUser(data.user);
+    if (typeof window !== "undefined") {
+      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(authorUser));
+    }
+    cachedUser = authorUser;
+    notifyAuthChange();
+    return authorUser;
+  },
+
+  // 4. 邮箱注册 - 发送验证码
+  async startEmailRegister(email: string, password: string, penName: string): Promise<VerificationResult> {
+    const res = await fetch("/api/auth/register/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({
+        email: email.trim(),
+        password,
+        penName: penName.trim(),
+      }),
+    });
+    return handleApiResponse<VerificationResult>(res);
+  },
+
+  // 5. 邮箱注册 - 验证并完成注册
+  async verifyEmailRegister(email: string, code: string): Promise<AuthorUser> {
+    const res = await fetch("/api/auth/register/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ email: email.trim(), code: code.trim() }),
+    });
+    const data = await handleApiResponse<{ authenticated: boolean; user: AuthUser }>(res);
+    const authorUser = normalizeUser(data.user);
+    if (typeof window !== "undefined") {
+      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(authorUser));
+    }
+    cachedUser = authorUser;
+    notifyAuthChange();
+    return authorUser;
+  },
+
+  // 6. 忘记密码 - 发送重置码
+  async startPasswordReset(email: string): Promise<VerificationResult> {
+    const res = await fetch("/api/auth/password/forgot", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ email: email.trim() }),
+    });
+    return handleApiResponse<VerificationResult>(res);
+  },
+
+  // 7. 忘记密码 - 确认重置密码
+  async confirmPasswordReset(email: string, code: string, newPassword: string): Promise<{ reset: boolean }> {
+    const res = await fetch("/api/auth/password/reset", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ email: email.trim(), code: code.trim(), newPassword }),
+    });
+    return handleApiResponse<{ reset: boolean }>(res);
+  },
+
+  // 8. 游客/快捷体验账号登录
   async loginAsGuest(): Promise<AuthorUser> {
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    await new Promise((resolve) => setTimeout(resolve, 250));
     if (typeof window !== "undefined") {
       localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(DEFAULT_GUEST_USER));
     }
@@ -151,20 +258,16 @@ export const authService = {
     return DEFAULT_GUEST_USER;
   },
 
-  // 发送验证码 (Mock)
-  async sendVerificationCode(target: string): Promise<{ success: boolean; message: string }> {
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    if (!target) {
-      throw new Error("请输入手机号或邮箱");
+  // 9. 退出登录
+  async logout(): Promise<void> {
+    try {
+      await fetch("/api/auth/logout", {
+        method: "POST",
+        credentials: "include",
+      });
+    } catch {
+      // 离线亦清理本地
     }
-    return {
-      success: true,
-      message: `验证码已发送至 ${target}（演示环境验证码：888888）`,
-    };
-  },
-
-  // 退出登录
-  logout(): void {
     if (typeof window !== "undefined") {
       localStorage.removeItem(AUTH_STORAGE_KEY);
     }
@@ -179,6 +282,9 @@ export function useAuth() {
 
   useEffect(() => {
     setMounted(true);
+    if (!isSessionChecked) {
+      authService.checkSession();
+    }
   }, []);
 
   return {
@@ -186,10 +292,13 @@ export function useAuth() {
     isAuthenticated: Boolean(mounted && user),
     isLoaded: mounted,
     loginWithPassword: authService.loginWithPassword,
-    loginWithCode: authService.loginWithCode,
-    register: authService.register,
+    startEmailLoginCode: authService.startEmailLoginCode,
+    verifyEmailLoginCode: authService.verifyEmailLoginCode,
+    startEmailRegister: authService.startEmailRegister,
+    verifyEmailRegister: authService.verifyEmailRegister,
+    startPasswordReset: authService.startPasswordReset,
+    confirmPasswordReset: authService.confirmPasswordReset,
     loginAsGuest: authService.loginAsGuest,
-    sendVerificationCode: authService.sendVerificationCode,
     logout: authService.logout,
   };
 }

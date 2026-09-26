@@ -3,9 +3,11 @@ import { all, first, run } from "@/server/db";
 import { AppError, notFound } from "@/server/errors";
 import { decryptSecret, encryptSecret } from "@/server/crypto";
 import { isoNow, localDateKey, newId } from "@/server/text";
-import { buildAiMessages } from "@/server/ai/prompts";
 import { fetchProviderModels, probeChatCompletion } from "@/server/ai/provider-client";
 import { chatCompletionsUrl, normalizeProviderBaseUrl } from "@/server/ai/security";
+import { createAiStreamResponse } from "@/server/ai/stream";
+import { prepareAiPrompt } from "@/server/ai/prompts";
+import { RESERVE_AI_REQUEST_SQL, reportedTokens } from "@/server/ai/usage";
 
 type AiConfigRow = {
   id: string;
@@ -126,36 +128,25 @@ async function loadConfig(ownerId: string): Promise<AiConfigRow> {
   return row;
 }
 
-async function enforceDailyLimit(ownerId: string) {
+async function reserveAiRequest(ownerId: string): Promise<string> {
   const date = localDateKey();
-  const usage = await first<{ request_count: number }>(
-    "SELECT request_count FROM ai_usage_daily WHERE owner_id = ? AND usage_date = ?",
-    ownerId,
-    date,
+  const now = isoNow();
+  const reserved = await first<{ request_count: number }>(
+    RESERVE_AI_REQUEST_SQL,
+    newId(), ownerId, date, now, now, DAILY_REQUEST_LIMIT,
   );
-  if ((usage?.request_count ?? 0) >= DAILY_REQUEST_LIMIT) {
+  if (!reserved) {
     throw new AppError(429, "AI_DAILY_LIMIT_REACHED", "今天的 AI 请求次数已达到本地安全上限");
   }
+  return date;
 }
 
-async function recordUsage(ownerId: string, inputTokens: number, outputTokens: number) {
-  const now = isoNow();
+async function recordReportedTokens(ownerId: string, date: string, inputTokens: unknown, outputTokens: unknown) {
   await run(
-    `INSERT INTO ai_usage_daily
-     (id, owner_id, usage_date, request_count, input_tokens, output_tokens, created_at, updated_at)
-     VALUES (?, ?, ?, 1, ?, ?, ?, ?)
-     ON CONFLICT(owner_id, usage_date) DO UPDATE SET
-       request_count = request_count + 1,
-       input_tokens = input_tokens + excluded.input_tokens,
-       output_tokens = output_tokens + excluded.output_tokens,
-       updated_at = excluded.updated_at`,
-    newId(),
-    ownerId,
-    localDateKey(),
-    inputTokens,
-    outputTokens,
-    now,
-    now,
+    `UPDATE ai_usage_daily SET
+       input_tokens = input_tokens + ?, output_tokens = output_tokens + ?, updated_at = ?
+     WHERE owner_id = ? AND usage_date = ?`,
+    reportedTokens(inputTokens), reportedTokens(outputTokens), isoNow(), ownerId, date,
   );
 }
 
@@ -171,13 +162,16 @@ export async function getAiUsage(ownerId: string) {
     inputTokens: row.input_tokens,
     outputTokens: row.output_tokens,
     requestLimit: DAILY_REQUEST_LIMIT,
+    requestCountMeaning: "attempts" as const,
+    tokenCountMeaning: "provider_reported_on_completed_requests" as const,
   }));
 }
 
 export async function generateWithAi(ownerId: string, input: AiGenerationInput) {
-  await enforceDailyLimit(ownerId);
+  const prompt = prepareAiPrompt(input);
   const config = await loadConfig(ownerId);
   const apiKey = await decryptSecret(config.encrypted_api_key, config.key_iv);
+  const usageDate = await reserveAiRequest(ownerId);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 60_000);
   let response: Response;
@@ -190,7 +184,7 @@ export async function generateWithAi(ownerId: string, input: AiGenerationInput) 
       },
       body: JSON.stringify({
         model: config.model,
-        messages: buildAiMessages(input),
+        messages: prompt.messages,
         temperature: input.temperature,
         max_tokens: input.maxTokens,
         stream: false,
@@ -216,23 +210,33 @@ export async function generateWithAi(ownerId: string, input: AiGenerationInput) 
     throw new AppError(502, "AI_PROVIDER_ERROR", `模型服务返回错误（${response.status}）`);
   }
 
-  const payload = (await response.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
-    usage?: { prompt_tokens?: number; completion_tokens?: number };
+  const payload = (await response.json().catch(() => {
+    throw new AppError(502, "AI_INVALID_RESPONSE", "模型服务返回了无法识别的数据");
+  })) as {
+    choices?: Array<{ message?: { content?: unknown } }>;
+    usage?: {
+      prompt_tokens?: unknown; completion_tokens?: unknown;
+      input_tokens?: unknown; output_tokens?: unknown;
+    };
   };
-  const content = payload.choices?.[0]?.message?.content?.trim();
+  const rawContent = payload.choices?.[0]?.message?.content;
+  const content = (typeof rawContent === "string" ? rawContent : Array.isArray(rawContent)
+    ? rawContent.map((part) => part && typeof part === "object" && typeof part.text === "string" ? part.text : "").join("")
+    : "").trim();
   if (!content) throw new AppError(502, "AI_EMPTY_RESPONSE", "模型服务没有返回可用内容");
-  const inputTokens = payload.usage?.prompt_tokens ?? 0;
-  const outputTokens = payload.usage?.completion_tokens ?? 0;
-  await recordUsage(ownerId, inputTokens, outputTokens);
+  const rawInputTokens = payload.usage?.prompt_tokens ?? payload.usage?.input_tokens;
+  const rawOutputTokens = payload.usage?.completion_tokens ?? payload.usage?.output_tokens;
+  const inputTokens = typeof rawInputTokens === "number" && Number.isSafeInteger(rawInputTokens) && rawInputTokens >= 0 ? rawInputTokens : null;
+  const outputTokens = typeof rawOutputTokens === "number" && Number.isSafeInteger(rawOutputTokens) && rawOutputTokens >= 0 ? rawOutputTokens : null;
+  await recordReportedTokens(ownerId, usageDate, inputTokens, outputTokens);
 
   return {
     action: input.action,
     content,
     model: config.model,
     usage: {
-      inputTokens: payload.usage?.prompt_tokens ?? null,
-      outputTokens: payload.usage?.completion_tokens ?? null,
+      inputTokens,
+      outputTokens,
     },
     contextSummary: {
       chapterCount: input.context.chapters.length,
@@ -241,5 +245,26 @@ export async function generateWithAi(ownerId: string, input: AiGenerationInput) 
       worldEntryCount: input.context.worldEntries.length,
       timelineEventCount: input.context.timelineEvents.length,
     },
+    contextBudget: prompt.budget,
   };
+}
+
+export async function streamWithAi(ownerId: string, input: AiGenerationInput, signal: AbortSignal) {
+  const prompt = prepareAiPrompt(input);
+  const config = await loadConfig(ownerId);
+  const apiKey = await decryptSecret(config.encrypted_api_key, config.key_iv);
+  const usageDate = await reserveAiRequest(ownerId);
+  return createAiStreamResponse({
+    baseUrl: config.base_url,
+    apiKey,
+    model: config.model,
+    input,
+    messages: prompt.messages,
+    contextBudget: prompt.budget,
+    requestId: newId(),
+    signal,
+    onDone: async (usage) => {
+      await recordReportedTokens(ownerId, usageDate, usage.inputTokens, usage.outputTokens);
+    },
+  });
 }

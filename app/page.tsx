@@ -1,8 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Archive,
+  AlertTriangle,
+  ArrowDown,
+  ArrowUp,
+  Award,
   Bold,
   BookOpen,
   Bot,
@@ -10,26 +14,37 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  ChevronUp,
   Clock3,
+  Copy,
   FileClock,
   FileDown,
   FilePlus2,
+  FolderPlus,
   Globe2,
   Heading2,
   Italic,
+  Link2,
   List,
   MoreHorizontal,
+  PanelRightClose,
+  PanelRightOpen,
   Plus,
   Quote,
   Redo2,
+  RefreshCw,
+  RotateCcw,
   Search,
   Settings2,
   Sparkles,
   Target,
+  Trash2,
+  Trophy,
   Undo2,
   UserRound,
   UsersRound,
   WandSparkles,
+  X,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -43,55 +58,86 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { UserMenu } from "@/components/auth/user-menu";
+import { OutlineView } from "@/components/workbench/outline-view";
+import { CharactersView } from "@/components/workbench/characters-view";
+import { WorldView } from "@/components/workbench/world-view";
+import { TimelineView } from "@/components/workbench/timeline-view";
+import { StatsView } from "@/components/workbench/stats-view";
+import { ExportDialog } from "@/components/workbench/export-dialog";
+import { VersionHistoryDialog } from "@/components/workbench/version-history-dialog";
+import { TrashDialog } from "@/components/workbench/trash-dialog";
+import { WorkSwitcher } from "@/components/workbench/work-switcher";
+import { CreateWorkDialog } from "@/components/workbench/create-work-dialog";
+import { CreateVolumeDialog } from "@/components/workbench/create-volume-dialog";
+import { AiSettingsDialog } from "@/components/workbench/ai-settings-dialog";
+import { ChapterLinksDialog } from "@/components/workbench/chapter-links-dialog";
+import {
+  fetchWorkspace,
+  switchActiveWorkspace,
+  fetchWorkDetails,
+  createWork,
+  archiveWork,
+  createVolume,
+  updateVolume,
+  deleteVolume,
+  reorderVolumes,
+  reorderChapters,
+  fetchChapter,
+  saveChapter,
+  createChapter,
+  softDeleteChapter,
+  fetchKnowledgeList,
+  fetchChapterLinks,
+  fetchWorkStats,
+  updateWorkStats,
+  ChapterConflictError,
+  type Work,
+  type Volume,
+  type Chapter,
+  type CharacterItem,
+  type OutlineItem,
+  type WorldItem,
+  type ChapterLinkItem,
+  type WorkStats,
+  type WritingDayStats,
+} from "@/lib/client/api";
+import { generateAiContentStream } from "@/lib/client/ai-stream";
+import { planAiContext, type AiAction, type AiContextBudget, type AiGenerationInput } from "@/contracts";
+import {
+  type ChapterReorderSnapshot,
+  calculateChapterOrderDelta,
+  verifyChapterReorderRevision,
+  canPerformStructuralAction,
+  canPerformSave,
+  categorizeMutationError,
+  isDraftContentEquivalent,
+  isDraftPendingSaveEquivalent,
+  canApplyResyncResponse,
+  canSwitchWork,
+} from "@/lib/client/chapter-order-guards";
 
-type Chapter = {
+type LocalChapter = {
   id: string;
+  workId?: string;
+  volumeId?: string | null;
   title: string;
   content: string;
-  status: "draft" | "done";
+  status: "draft" | "completed" | "done";
+  wordCount?: number;
+  revision?: number;
+  sortOrder?: number;
 };
-
-type AiSettings = {
-  endpoint: string;
-  model: string;
-  apiKey: string;
-};
-
-const STORAGE_KEY = "smart-author-demo-v1";
-
-const initialChapters: Chapter[] = [
-  {
-    id: "chapter-1",
-    title: "第一章 雨夜来客",
-    status: "done",
-    content: `
-      <p>雨下到第三更，青石巷里的灯火已经熄了大半。</p>
-      <p>沈砚把最后一册旧书收入木箱，正要合上铺门，门外忽然响起三声叩击。不轻不重，像是来人早已算准他的耐心。</p>
-      <p>他隔着门问：“找谁？”</p>
-      <p>回答他的只有雨声。片刻后，一封被油纸裹紧的信从门缝下推了进来。信封上没有落款，只用朱砂写着四个字——<strong>故人已归</strong>。</p>
-      <p>沈砚盯着那行字，指尖停在半空。十年前埋进北山雪里的秘密，终于还是找上了门。</p>
-    `,
-  },
-  {
-    id: "chapter-2",
-    title: "第二章 无字旧书",
-    status: "draft",
-    content: `<p>天亮以前，沈砚在旧书的夹层里找到了一张陌生的舆图。</p><p>墨线所指之处，正是北山禁地。</p>`,
-  },
-  {
-    id: "chapter-3",
-    title: "第三章 北山旧事",
-    status: "draft",
-    content: `<p>关于北山，城里的人总有许多传说，却没有一个人愿意在入夜后提起。</p>`,
-  },
-  {
-    id: "chapter-4",
-    title: "第四章 灯下影",
-    status: "draft",
-    content: `<p>灯焰晃了一下，墙上的影子却没有跟着动。</p>`,
-  },
-];
 
 const projectNav = [
   { label: "正文", icon: BookOpen, active: true },
@@ -115,99 +161,1826 @@ function plainText(html: string) {
     .trim();
 }
 
+const TODAY_WORDS_STORAGE_KEY = "smart-author-today-words";
+const DAILY_GOAL_STORAGE_KEY = "smart-author-daily-goal";
+
+const DEFAULT_DAILY_GOAL = 3000;
+const DEFAULT_TODAY_WORDS = 0;
+
+export function getShanghaiDateKey(d: Date = new Date()): string {
+  try {
+    const formatter = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Shanghai",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+    return formatter.format(d);
+  } catch {
+    return d.toISOString().slice(0, 10);
+  }
+}
+
+function saveTodayWordsToStorage(words: number, celebrated?: boolean) {
+  if (typeof window === "undefined") return;
+  const today = getShanghaiDateKey();
+  let oldCelebrated = false;
+  try {
+    const raw = localStorage.getItem(TODAY_WORDS_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed.date === today) oldCelebrated = parsed.celebrated || false;
+    }
+  } catch {}
+  localStorage.setItem(
+    TODAY_WORDS_STORAGE_KEY,
+    JSON.stringify({
+      date: today,
+      words,
+      celebrated: celebrated !== undefined ? celebrated : oldCelebrated,
+    }),
+  );
+  window.dispatchEvent(new Event("today-words-change"));
+}
+
+type ActiveMainView = "writing" | "outline" | "characters" | "world" | "timeline" | "stats";
+
 export default function Home() {
-  const [chapters, setChapters] = useState(initialChapters);
-  const [selectedId, setSelectedId] = useState(initialChapters[0].id);
-  const [saveState, setSaveState] = useState<"saved" | "saving">("saved");
+  const [activeView, setActiveView] = useState<ActiveMainView>("writing");
+  const [topNavTab, setTopNavTab] = useState<"writing" | "materials" | "stats">("writing");
+  const [works, setWorks] = useState<Work[]>([]);
+  const [activeWorkId, setActiveWorkId] = useState<string | null>(null);
+  const [volumes, setVolumes] = useState<Volume[]>([]);
+  const [chapters, setChapters] = useState<LocalChapter[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [isCreateWorkOpen, setIsCreateWorkOpen] = useState(false);
+  const [isAiSettingsOpen, setIsAiSettingsOpen] = useState(false);
+  const [isLoadingWorkspace, setIsLoadingWorkspace] = useState(true);
+  const [saveState, setSaveState] = useState<"saved" | "saving" | "conflict" | "error">("saved");
+  const [isCreatingChapter, setIsCreatingChapter] = useState(false);
+  const isCreatingChapterRef = useRef(false);
+  const [conflictChapterId, setConflictChapterId] = useState<string | null>(null);
+  const [conflictServerChapter, setConflictServerChapter] = useState<{
+    title: string;
+    content: string;
+    revision: number;
+  } | null>(null);
+
+  // 知识库实体状态（当前作品真实设定）
+  const [charactersList, setCharactersList] = useState<CharacterItem[]>([]);
+  const [outlinesList, setOutlinesList] = useState<OutlineItem[]>([]);
+  const [worldList, setWorldList] = useState<WorldItem[]>([]);
+  const [timelineList, setTimelineList] = useState<any[]>([]);
+  const [knowledgeError, setKnowledgeError] = useState<string | null>(null);
+
+  // 章节与设定关联状态
+  const [chapterLinks, setChapterLinks] = useState<ChapterLinkItem[]>([]);
+  const [isChapterLinksOpen, setIsChapterLinksOpen] = useState(false);
+
+  // 分卷管理与折叠状态
+  const [isCreateVolumeOpen, setIsCreateVolumeOpen] = useState(false);
+  const [collapsedVolumeIds, setCollapsedVolumeIds] = useState<Set<string>>(new Set());
+
+  // 右侧辅助检查面板折叠状态（响应式自适应）
+  const [isInspectorCollapsed, setIsInspectorCollapsed] = useState(false);
+
   const [rightTab, setRightTab] = useState("ai");
-  const [aiPrompt, setAiPrompt] = useState("保持克制悬疑的语气，续写来客真正现身前的场景。");
+  const [aiPrompt, setAiPrompt] = useState("保持克制沉稳的语气，续写下一段场景。");
   const [aiResult, setAiResult] = useState("");
+  const [aiSourceKey, setAiSourceKey] = useState("");
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiBudget, setAiBudget] = useState<AiContextBudget | null>(null);
+  const [aiComplete, setAiComplete] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [settings, setSettings] = useState<AiSettings>({
-    endpoint: "https://api.openai.com/v1",
-    model: "gpt-4.1-mini",
-    apiKey: "",
-  });
+  const [lastAiAction, setLastAiAction] = useState<AiAction>("continue");
+  const aiAbortRef = useRef<AbortController | null>(null);
+  const aiRunIdRef = useRef(0);
+  const [copiedToast, setCopiedToast] = useState(false);
+  const [includeCurrentChapter, setIncludeCurrentChapter] = useState(true);
+  const [includeOutline, setIncludeOutline] = useState(true);
+  const [includeCharacters, setIncludeCharacters] = useState(false);
+  const [includeWorld, setIncludeWorld] = useState(false);
+  const [includeTimeline, setIncludeTimeline] = useState(false);
   const editorRef = useRef<HTMLDivElement>(null);
+  const paperScrollRef = useRef<HTMLDivElement>(null);
+  const [scrollProgress, setScrollProgress] = useState(0);
+  const aiCurrentSourceKey = `${activeWorkId ?? ""}:${selectedId ?? ""}`;
+  const isAiGeneratingHere = isGenerating && aiSourceKey === aiCurrentSourceKey;
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const selected = chapters.find((chapter) => chapter.id === selectedId) ?? chapters[0];
-  const chapterWords = plainText(selected.content).length;
-  const totalWords = chapters.reduce((sum, chapter) => sum + plainText(chapter.content).length, 0);
-  const goal = 3000;
-  const progress = Math.min(100, Math.round((chapterWords / goal) * 100));
+  // 串行保存与状态引用追踪（保证保存执行时不依赖过期快照）
+  const chaptersRef = useRef(chapters);
+  chaptersRef.current = chapters;
 
+  const saveStateRef = useRef<"saved" | "saving" | "conflict" | "error">(saveState);
+  saveStateRef.current = saveState;
+
+  const activeSavePromiseRef = useRef<Promise<boolean> | null>(null);
+
+  // 关键 R01：正文草稿基线修订号与目录观察修订号分离
+  // 1) contentBaseRevisionsRef: 本地编辑器草稿正文实际所基于的服务端版本
+  //    仅在获取完整正文(fetchChapter)、保存正文成功(saveChapter)、恢复历史版本、拉取覆盖、或可核实的同章结构增量成功时推进
+  const contentBaseRevisionsRef = useRef<Record<string, number>>({});
+  // 2) catalogRevisionsRef: 从服务端目录（fetchWorkDetails, reorderChapters等）观察到的最新版本
+  //    用于构造目录重排 expectedRevisions 与检测外部并发修改；绝不默默推进 contentBaseRevisionsRef
+  const catalogRevisionsRef = useRef<Record<string, number>>({});
+  // 记录每个章节的前端草稿递增序列号，用于精确判断保存在途时是否有更新的输入发生
+  const draftSeqRef = useRef<Record<string, number>>({});
+
+  // 知识库加载竞态隔离：防快速切作品时老请求覆盖新作品设定
+  const knowledgeRequestIdRef = useRef(0);
+  const activeWorkIdRef = useRef<string | null>(null);
+  activeWorkIdRef.current = activeWorkId;
+
+  // 关键 F03：工作区、选章、关联及统计加载代次 Token，防快速切换时迟到响应覆盖新页面状态
+  const workspaceRequestIdRef = useRef(0);
+  const chapterRequestIdRef = useRef(0);
+  const linksRequestIdRef = useRef(0);
+  const statsRequestIdRef = useRef(0);
+  const loadWorkStatsRef = useRef<((workId: string) => Promise<void>) | null>(null);
+
+  // 关键 C02：章节排序与跨卷移动并发保护与请求代次 Token
+  const isReorderingRef = useRef(false);
+  const activeReorderPromiseRef = useRef<Promise<void> | null>(null);
+  const reorderRequestIdRef = useRef(0);
+
+  // 关键 Q02：目录待同步/未知结果持久状态与重同步门禁
+  const [needsCatalogResync, setNeedsCatalogResync] = useState(false);
+  const needsCatalogResyncRef = useRef(false);
+  needsCatalogResyncRef.current = needsCatalogResync;
+  // 关键 Q02：按作品记录目录待同步状态集合，确保跨作品切换后原作品门禁持久保留
+  const worksNeedingResyncRef = useRef<Set<string>>(new Set());
+  const [isResyncingCatalog, setIsResyncingCatalog] = useState(false);
+  const resyncRequestIdRef = useRef(0);
+
+  // 服务端已保存的权威写作统计（contracts/types.ts WorkStats）
+  const [workStats, setWorkStats] = useState<WorkStats | null>(null);
+
+  type PendingSave = {
+    chapterId: string;
+    title?: string;
+    content?: string;
+  };
+  const pendingSaveRef = useRef<PendingSave | null>(null);
+  const currentEditorChapterIdRef = useRef<string | null>(selectedId);
+
+  // SSR 与初次水合使用确定性的初始值，挂载后通过 useEffect 安全同步 localStorage
+  const [dailyGoal, setDailyGoal] = useState<number>(DEFAULT_DAILY_GOAL);
+  const [todayWords, setTodayWords] = useState<number>(DEFAULT_TODAY_WORDS);
+  const [isGoalDialogOpen, setIsGoalDialogOpen] = useState(false);
+  const [goalInputValue, setGoalInputValue] = useState(DEFAULT_DAILY_GOAL.toString());
+  const [showCheerModal, setShowCheerModal] = useState(false);
+  const hasCelebratedRef = useRef(false);
+
+  const currentWork = works.find((w) => w.id === activeWorkId) || works[0] || null;
+  const selected: LocalChapter =
+    chapters.find((chapter) => chapter.id === selectedId) ||
+    chapters[0] || {
+      id: "placeholder",
+      title: "第一章",
+      content: "<p></p>",
+      status: "draft" as const,
+    };
+  const getChapterWordCount = (chapter: LocalChapter) => {
+    if (chapter.id === selectedId) {
+      return plainText(chapter.content).length;
+    }
+    return chapter.wordCount ?? (chapter.content ? plainText(chapter.content).length : 0);
+  };
+  const currentVolume = volumes.find((v) => v.id === selected.volumeId) || volumes[0] || null;
+  const chapterWords = plainText(selected.content).length;
+  const totalWords = chapters.reduce((sum, chapter) => sum + getChapterWordCount(chapter), 0);
+
+  const aiContextPayload = useMemo<AiGenerationInput["context"]>(() => {
+    const currentChapterText = plainText(selected.content || "");
+    return {
+      chapters: includeCurrentChapter && currentChapterText
+        ? [{ id: selected.id, title: selected.title, content: currentChapterText.slice(-3000) }] : [],
+      outlines: includeOutline
+        ? outlinesList.slice(0, 2).map((item) => ({ title: item.title, content: item.content })) : [],
+      characters: includeCharacters
+        ? charactersList.slice(0, 3).map((item) => ({ name: item.name, description: `${item.role}: ${item.description}` })) : [],
+      worldEntries: includeWorld
+        ? worldList.slice(0, 2).map((item) => ({ name: item.name, content: item.summary || item.content || "" })) : [],
+      timelineEvents: includeTimeline
+        ? timelineList.slice(0, 2).map((item) => ({ title: item.title, description: item.description || "" })) : [],
+    };
+  }, [includeCurrentChapter, includeOutline, includeCharacters, includeWorld, includeTimeline,
+    selected.id, selected.title, selected.content, outlinesList, charactersList, worldList, timelineList]);
+  const aiPreviewBudget = useMemo(() => planAiContext({
+    action: "continue", instruction: aiPrompt || " ", selectedText: "", context: aiContextPayload,
+    temperature: 0.7, maxTokens: 2000,
+  }).budget, [aiPrompt, aiContextPayload]);
+
+  // 总体每日码字进度：以服务端 workStats 为权威来源，区分 null、0 与具体目标
+  const serverTodayWords = workStats ? workStats.todayWordsWritten : todayWords;
+  const serverDailyGoal = workStats ? workStats.todayTargetWords : dailyGoal;
+
+  const isUnlimitedDaily = serverDailyGoal === 0;
+  const hasDailyTarget = serverDailyGoal !== null && serverDailyGoal > 0;
+  const progress = isUnlimitedDaily
+    ? 100
+    : hasDailyTarget
+    ? Math.min(100, Math.round((serverTodayWords / serverDailyGoal) * 100))
+    : 0;
+  const isGoalReached = hasDailyTarget && serverTodayWords >= serverDailyGoal;
+
+  async function updateDailyGoal(val: number) {
+    if (val < 0) return;
+    setDailyGoal(val);
+    setGoalInputValue(val.toString());
+    if (activeWorkId && workStats) {
+      try {
+        const updated = await updateWorkStats(activeWorkId, {
+          date: workStats.today,
+          targetWords: val,
+        });
+        setWorkStats(updated);
+      } catch (err) {
+        console.error("更新服务端写作目标失败:", err);
+      }
+    }
+    // 如果设置的目标已被今日字数超越，触发欢呼庆祝（0 字自由创作不触发庆祝）
+    if (val > 0 && serverTodayWords >= val) {
+      hasCelebratedRef.current = true;
+      setTimeout(() => {
+        setShowCheerModal(true);
+      }, 100);
+    } else {
+      hasCelebratedRef.current = false;
+    }
+  }
+
+  function addTodayWords(count: number) {
+    if (count <= 0) return;
+    setTodayWords((prev) => {
+      const next = prev + count;
+      if (dailyGoal > 0 && next >= dailyGoal && !hasCelebratedRef.current) {
+        hasCelebratedRef.current = true;
+        saveTodayWordsToStorage(next, true);
+        setTimeout(() => {
+          setShowCheerModal(true);
+        }, 100);
+      } else {
+        saveTodayWordsToStorage(next);
+      }
+      return next;
+    });
+  }
+
+  // 客户端挂载后从 localStorage 安全同步字数与目标，保证 SSR 与初次客户端渲染 DOM 结构严格一致，彻底杜绝水合不匹配
   useEffect(() => {
-    const stored = window.localStorage.getItem(STORAGE_KEY);
-    if (!stored) return;
+    const syncFromStorage = () => {
+      try {
+        const storedGoal = localStorage.getItem(DAILY_GOAL_STORAGE_KEY);
+        if (storedGoal !== null) {
+          const parsed = parseInt(storedGoal, 10);
+          if (!isNaN(parsed) && parsed >= 0) {
+            setDailyGoal(parsed);
+            setGoalInputValue(parsed.toString());
+          }
+        }
+
+        const today = getShanghaiDateKey();
+        const rawWords = localStorage.getItem(TODAY_WORDS_STORAGE_KEY);
+        if (rawWords) {
+          const parsed = JSON.parse(rawWords);
+          if (parsed.date === today && typeof parsed.words === "number") {
+            setTodayWords(parsed.words);
+            if (parsed.celebrated) {
+              hasCelebratedRef.current = true;
+            }
+          }
+        }
+      } catch {}
+    };
+
+    syncFromStorage();
+
+    window.addEventListener("daily-goal-change", syncFromStorage);
+    window.addEventListener("today-words-change", syncFromStorage);
+    window.addEventListener("storage", syncFromStorage);
+    return () => {
+      window.removeEventListener("daily-goal-change", syncFromStorage);
+      window.removeEventListener("today-words-change", syncFromStorage);
+      window.removeEventListener("storage", syncFromStorage);
+    };
+  }, []);
+
+  // 串行保存处理器：无论网络如何延迟或用户持续输入，保证保存请求单线串行执行，杜绝过期响应覆盖新草稿与 409
+  const performSave = useCallback(async (): Promise<boolean> => {
+    // 关键 C02：若当前已有在途分卷/章节排序请求，等待其完成并同步好版本号，防止并发写入导致版本冲突 409
+    if (activeReorderPromiseRef.current) {
+      try {
+        await activeReorderPromiseRef.current;
+      } catch {}
+    }
+
+    // 若当前已有在途保存请求，先等待其完成
+    if (activeSavePromiseRef.current) {
+      try {
+        await activeSavePromiseRef.current;
+      } catch {}
+      // 前一个请求完成后，若在途期间有新输入（pendingSaveRef 仍有内容），继续串行保存
+      if (pendingSaveRef.current) {
+        return await performSave();
+      }
+      return saveStateRef.current !== "conflict";
+    }
+
+    // 检查是否有待保存的草稿
+    const pending = pendingSaveRef.current;
+    if (!pending) {
+      return saveStateRef.current !== "conflict";
+    }
+
+    if (saveStateRef.current === "conflict") {
+      return false;
+    }
+
+    const runSaveLoop = async (): Promise<boolean> => {
+      while (pendingSaveRef.current) {
+        const currentPending = pendingSaveRef.current;
+        const currentSeq = draftSeqRef.current[currentPending.chapterId] || 0;
+        pendingSaveRef.current = null;
+        setSaveState("saving");
+
+        try {
+          // 关键 Q02：正文草稿的 expectedRevision 必须且只能来自 contentBaseRevisionsRef（本地编辑器草稿实际所基于的服务端版本）
+          // 缺失正文基线时不发送无版本保存（防止无锁静默覆写）
+          let contentBaseRev = contentBaseRevisionsRef.current[currentPending.chapterId];
+
+          if (contentBaseRev === undefined) {
+            console.warn(
+              `章节 ${currentPending.chapterId} 缺失本地正文基线版本，从服务端安全拉取最新正文以供比对与冲突保护...`,
+            );
+            try {
+              const latest = await fetchChapter(currentPending.chapterId);
+              catalogRevisionsRef.current[currentPending.chapterId] = latest.revision;
+
+              // 检查在 fetchChapter 异步等待期间是否有作者新键入的内容
+              const newerPending = pendingSaveRef.current as PendingSave | null;
+              const hasNewerSameChapterInput =
+                newerPending !== null && newerPending.chapterId === currentPending.chapterId;
+              const effectivePending: PendingSave = {
+                chapterId: currentPending.chapterId,
+                title: hasNewerSameChapterInput ? (newerPending.title ?? currentPending.title) : currentPending.title,
+                content: hasNewerSameChapterInput ? (newerPending.content ?? currentPending.content) : currentPending.content,
+              };
+
+              // 关键 Q02 Boundary ②: 缺失基线时按待保存字段逐项严格比对！
+              // 富文本加粗/斜体/空白等可见修改绝不能被忽略，仅改标题时不能用空正文占位判定
+              // 只有所有待保存字段（title 和/或 content）确与服务端完全一致时，才可推进基线并跳过 PATCH
+              const isEquivalent = isDraftPendingSaveEquivalent(
+                effectivePending,
+                latest,
+              );
+
+              if (isEquivalent) {
+                // 待保存修改确与服务端事实完全一致，安全对齐基线，无需重复发 PATCH
+                contentBaseRevisionsRef.current[currentPending.chapterId] = latest.revision;
+                contentBaseRev = latest.revision;
+                if (hasNewerSameChapterInput) {
+                  pendingSaveRef.current = null;
+                }
+                setSaveState("saved");
+                continue;
+              } else {
+                // 待保存字段与服务端存在差异（或无法证明等价）：
+                // 坚决阻止旧草稿静默覆盖，保留本地草稿（合并最新输入），进入冲突保护，挂载服务端事实供作者比对或恢复
+                console.warn(
+                  `章节 ${currentPending.chapterId} 缺失基线且待保存修改与服务端不一致，阻止静默覆盖，转入版本冲突门禁`,
+                );
+                setSaveState("conflict");
+                setConflictChapterId(currentPending.chapterId);
+                setConflictServerChapter({
+                  title: latest.title,
+                  content: latest.content || "<p></p>",
+                  revision: latest.revision,
+                });
+                // 关键修复：保留合并后的最新输入 effectivePending，绝不被旧快照 currentPending 覆盖！
+                pendingSaveRef.current = newerPending && !hasNewerSameChapterInput ? newerPending : effectivePending;
+                return false;
+              }
+            } catch (fetchErr) {
+              console.error("获取服务端章节正文失败，阻止无基线保存:", fetchErr);
+              setSaveState("error");
+              const newerPending = pendingSaveRef.current as PendingSave | null;
+              const hasNewerSameChapterInput =
+                newerPending !== null && newerPending.chapterId === currentPending.chapterId;
+              const effectivePending: PendingSave = {
+                chapterId: currentPending.chapterId,
+                title: hasNewerSameChapterInput ? (newerPending.title ?? currentPending.title) : currentPending.title,
+                content: hasNewerSameChapterInput ? (newerPending.content ?? currentPending.content) : currentPending.content,
+              };
+              pendingSaveRef.current = newerPending && !hasNewerSameChapterInput ? newerPending : effectivePending;
+              return false;
+            }
+          }
+
+          const observedCatalogRev = catalogRevisionsRef.current[currentPending.chapterId];
+
+          // 关键门禁：如果在发起保存前，目录观察到的版本已经大于本地正文基线，说明其他端已更新该章正文，立即转入冲突保护，杜绝旧稿写回！
+          if (
+            observedCatalogRev !== undefined &&
+            contentBaseRev !== undefined &&
+            observedCatalogRev > contentBaseRev
+          ) {
+            console.warn(
+              `检测到服务端目录存在更新的修订号 (本地基线: ${contentBaseRev}, 目录观察: ${observedCatalogRev})，阻止旧草稿静默覆盖，转入版本冲突门禁`,
+            );
+            setSaveState("conflict");
+            setConflictChapterId(currentPending.chapterId);
+            try {
+              const latest = await fetchChapter(currentPending.chapterId);
+              catalogRevisionsRef.current[currentPending.chapterId] = latest.revision;
+              setConflictServerChapter({
+                title: latest.title,
+                content: latest.content,
+                revision: latest.revision,
+              });
+            } catch {}
+            return false;
+          }
+
+          const expectedRevision = contentBaseRev;
+          if (expectedRevision === undefined) {
+            setSaveState("error");
+            return false;
+          }
+
+          const payload: { title?: string; content?: string; expectedRevision: number } = {
+            expectedRevision,
+          };
+          if (currentPending.title !== undefined) payload.title = currentPending.title;
+          if (currentPending.content !== undefined) payload.content = currentPending.content;
+
+          const updated = await saveChapter(currentPending.chapterId, payload);
+
+          // 正文保存成功，权威推进正文基线与目录观察修订号
+          contentBaseRevisionsRef.current[currentPending.chapterId] = updated.revision;
+          catalogRevisionsRef.current[currentPending.chapterId] = updated.revision;
+
+          // 更新章节状态：若在在途网络请求期间用户已键入更新内容，保留最新草稿，决不让旧响应覆盖新输入
+          const inFlightPending = pendingSaveRef.current as PendingSave | null;
+          const latestSeq = draftSeqRef.current[currentPending.chapterId] || 0;
+          const hasNewerEdits =
+            latestSeq > currentSeq ||
+            (inFlightPending?.chapterId === currentPending.chapterId &&
+              inFlightPending?.content !== undefined);
+          const hasNewerTitle =
+            inFlightPending?.chapterId === currentPending.chapterId &&
+            inFlightPending?.title !== undefined;
+
+          setChapters((prev) =>
+            prev.map((c) => {
+              if (c.id !== currentPending.chapterId) return c;
+              return {
+                ...c,
+                revision: updated.revision,
+                wordCount: updated.wordCount,
+                title: hasNewerTitle ? c.title : updated.title,
+                content: hasNewerEdits ? c.content : updated.content,
+              };
+            }),
+          );
+
+          setSaveState("saved");
+          setConflictChapterId(null);
+          setConflictServerChapter(null);
+
+          // 保存成功后触发服务端权威统计刷新
+          if (activeWorkIdRef.current && loadWorkStatsRef.current) {
+            loadWorkStatsRef.current(activeWorkIdRef.current);
+          }
+        } catch (err: unknown) {
+          if (err instanceof ChapterConflictError || (err as any)?.status === 409) {
+            console.warn("保存章节版本冲突 (409 CONFLICT):", err);
+            setSaveState("conflict");
+            setConflictChapterId(currentPending.chapterId);
+            try {
+              const latest = await fetchChapter(currentPending.chapterId);
+              // 关键 R01: 仅更新目录观察版本，绝不推进未决草稿的 contentBaseRevisionsRef!
+              catalogRevisionsRef.current[currentPending.chapterId] = latest.revision;
+              setConflictServerChapter({
+                title: latest.title,
+                content: latest.content,
+                revision: latest.revision,
+              });
+            } catch (fetchErr) {
+              console.error("拉取冲突章节服务器版本失败:", fetchErr);
+            }
+            return false;
+          }
+          console.error("保存章节失败:", err);
+          // 关键 F02：网络失败时将草稿还原回 pendingSaveRef，若在途期间有其他字段修改，执行字段合并防止丢失
+          const existingPending = pendingSaveRef.current as PendingSave | null;
+          if (!existingPending) {
+            pendingSaveRef.current = currentPending;
+          } else if (existingPending.chapterId === currentPending.chapterId) {
+            pendingSaveRef.current = {
+              chapterId: currentPending.chapterId,
+              title: existingPending.title !== undefined ? existingPending.title : currentPending.title,
+              content: existingPending.content !== undefined ? existingPending.content : currentPending.content,
+            };
+          }
+          setSaveState("error");
+          return false;
+        }
+      }
+      return true;
+    };
+
+    const promise = runSaveLoop();
+    activeSavePromiseRef.current = promise;
     try {
-      const data = JSON.parse(stored) as {
-        chapters?: Chapter[];
-        selectedId?: string;
-        settings?: AiSettings;
-      };
-      if (data.chapters?.length) setChapters(data.chapters);
-      if (data.selectedId) setSelectedId(data.selectedId);
-      if (data.settings) setSettings(data.settings);
-    } catch {
-      window.localStorage.removeItem(STORAGE_KEY);
+      return await promise;
+    } finally {
+      if (activeSavePromiseRef.current === promise) {
+        activeSavePromiseRef.current = null;
+      }
+    }
+  }, []);
+
+  // 立即刷盘保存未完成的草稿（防止防抖延迟期间切章/切作品/删除/离开丢稿）
+  const flushPendingSave = useCallback(async (): Promise<boolean> => {
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
+    return await performSave();
+  }, [performSave]);
+
+  // 快捷键保存与离开防丢稿保护（覆盖在途保存中、未保存防抖与冲突状态）
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        flushPendingSave();
+      }
+    };
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      const isDirty =
+        pendingSaveRef.current !== null ||
+        activeSavePromiseRef.current !== null ||
+        saveStateRef.current === "saving" ||
+        saveStateRef.current === "conflict" ||
+        saveStateRef.current === "error";
+      if (isDirty) {
+        e.preventDefault();
+        e.returnValue = "您有尚未保存、正在保存或处于版本冲突的草稿，确定要离开吗？";
+        return "您有尚未保存、正在保存或处于版本冲突的草稿，确定要离开吗？";
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+    };
+  }, [flushPendingSave]);
+
+  // 加载当前作品的设定与知识库（请求隔离与版本号防竞态）
+  const loadKnowledgeData = useCallback(async (workId: string) => {
+    const reqId = ++knowledgeRequestIdRef.current;
+    // 切换作品时立即清空上一作品设定，防止残留与串读
+    setCharactersList([]);
+    setOutlinesList([]);
+    setWorldList([]);
+    setTimelineList([]);
+    setKnowledgeError(null);
+
+    try {
+      const [c, o, w, t] = await Promise.allSettled([
+        fetchKnowledgeList<CharacterItem>(workId, "characters"),
+        fetchKnowledgeList<OutlineItem>(workId, "outlines"),
+        fetchKnowledgeList<WorldItem>(workId, "world"),
+        fetchKnowledgeList<any>(workId, "timeline"),
+      ]);
+
+      // 若在加载期间作品已再次切换，丢弃过期响应
+      if (reqId !== knowledgeRequestIdRef.current || workId !== activeWorkIdRef.current) {
+        return;
+      }
+
+      let hasError = false;
+      if (c.status === "fulfilled") setCharactersList(c.value); else hasError = true;
+      if (o.status === "fulfilled") setOutlinesList(o.value); else hasError = true;
+      if (w.status === "fulfilled") setWorldList(w.value); else hasError = true;
+      if (t.status === "fulfilled") setTimelineList(t.value); else hasError = true;
+
+      if (hasError) {
+        setKnowledgeError("部分设定未能成功加载，可点击右上角刷新重新获取。");
+      }
+    } catch (err) {
+      if (reqId === knowledgeRequestIdRef.current) {
+        console.error("加载设定数据失败:", err);
+        setKnowledgeError("加载作品设定库失败，请稍后重试。");
+      }
+    }
+  }, []);
+
+  // 工作区与作品数据真实加载（F03：请求代次 Token 隔离迟到响应）
+  const loadWorkspaceData = useCallback(async (preferredWorkId?: string) => {
+    const wsToken = ++workspaceRequestIdRef.current;
+    try {
+      setIsLoadingWorkspace(true);
+      const ws = await fetchWorkspace();
+      if (wsToken !== workspaceRequestIdRef.current) return;
+      const workList = ws.works || [];
+
+      // 如果当前没有任何作品，显示真实空状态，绝不自动创建虚假样例作品
+      if (workList.length === 0) {
+        setWorks([]);
+        setActiveWorkId(null);
+        setVolumes([]);
+        setChapters([]);
+        setSelectedId(null);
+        setCharactersList([]);
+        setOutlinesList([]);
+        setWorldList([]);
+        setTimelineList([]);
+        setWorkStats(null);
+        if (editorRef.current) {
+          editorRef.current.innerHTML = "<p></p>";
+        }
+        return;
+      }
+
+      setWorks(workList);
+      const targetWorkId = preferredWorkId || ws.activeWorkId || workList[0].id;
+      setActiveWorkId(targetWorkId);
+      activeWorkIdRef.current = targetWorkId;
+
+      // 关键 Q02：根据目标作品是否在待同步集合中立即决定目录门禁，跨作品切换保留原作品门禁
+      const isResyncNeededForThisWork = worksNeedingResyncRef.current.has(targetWorkId);
+      setNeedsCatalogResync(isResyncNeededForThisWork);
+      needsCatalogResyncRef.current = isResyncNeededForThisWork;
+
+      loadKnowledgeData(targetWorkId);
+
+      // 加载当前作品的卷与章节
+      const details = await fetchWorkDetails(targetWorkId);
+      if (wsToken !== workspaceRequestIdRef.current) return;
+      setVolumes(details.volumes || []);
+
+      // 同步拉取当前作品权威服务端统计
+      if (loadWorkStatsRef.current) {
+        loadWorkStatsRef.current(targetWorkId);
+      }
+
+      // 映射章节，必须保留后端的 revision 与真实 sortOrder，用于乐观锁与精确结构增量计算
+      const chapterList: LocalChapter[] = (details.chapters || []).map((c) => ({
+        id: c.id,
+        workId: c.workId,
+        volumeId: c.volumeId,
+        title: c.title,
+        content: c.content || "<p></p>",
+        status: c.status,
+        wordCount: c.wordCount,
+        revision: c.revision,
+        sortOrder: c.sortOrder,
+      }));
+
+      // 同步记录目录观察修订号
+      chapterList.forEach((c) => {
+        if (c.revision !== undefined) {
+          catalogRevisionsRef.current[c.id] = c.revision;
+        }
+      });
+
+
+      // 如果后端章节列表为空，显示真实空章节状态，不自动创建假章节
+      if (chapterList.length === 0) {
+        setChapters([]);
+        setSelectedId(null);
+        if (editorRef.current) {
+          editorRef.current.innerHTML = "<p></p>";
+        }
+        return;
+      }
+
+      setChapters(chapterList);
+
+      // 确定选中的章节：刷新页面时从 ws.activeChapterId 安全恢复（修复 A04）
+      const isValidActiveChapter = ws.activeChapterId && chapterList.some((c) => c.id === ws.activeChapterId);
+      const isPreferredMatch = preferredWorkId ? preferredWorkId === targetWorkId : true;
+      const targetChapterId =
+        (isPreferredMatch && isValidActiveChapter ? ws.activeChapterId : null) ||
+        chapterList[0].id;
+      setSelectedId(targetChapterId);
+      currentEditorChapterIdRef.current = targetChapterId;
+      loadChapterLinks(targetChapterId);
+
+      // 加载选中章节的完整正文与最新 revision
+      try {
+        const fullCh = await fetchChapter(targetChapterId);
+        if (wsToken !== workspaceRequestIdRef.current) return;
+        if (fullCh.content !== undefined) {
+          if (fullCh.revision !== undefined) {
+            contentBaseRevisionsRef.current[targetChapterId] = fullCh.revision;
+            catalogRevisionsRef.current[targetChapterId] = fullCh.revision;
+          }
+          setChapters((prev) =>
+            prev.map((c) =>
+              c.id === targetChapterId
+                ? {
+                    ...c,
+                    content: fullCh.content,
+                    revision: fullCh.revision,
+                    wordCount: fullCh.wordCount,
+                    sortOrder: fullCh.sortOrder !== undefined ? fullCh.sortOrder : c.sortOrder,
+                  }
+                : c,
+            ),
+          );
+          if (editorRef.current && currentEditorChapterIdRef.current === targetChapterId) {
+            editorRef.current.innerHTML = fullCh.content || "<p></p>";
+          }
+        }
+      } catch (err) {
+        console.error("获取章节正文失败:", err);
+      }
+    } catch (err) {
+      console.error("加载工作区失败:", err);
+    } finally {
+      if (wsToken === workspaceRequestIdRef.current) {
+        setIsLoadingWorkspace(false);
+      }
+    }
+  }, [loadKnowledgeData]);
+
+  // 加载当前章节关联设定（F03：请求代次 Token 隔离迟到响应）
+  const loadChapterLinks = useCallback(async (chapterId: string) => {
+    if (!chapterId || chapterId === "placeholder") {
+      setChapterLinks([]);
+      return;
+    }
+    const token = ++linksRequestIdRef.current;
+    try {
+      const links = await fetchChapterLinks(chapterId);
+      if (token !== linksRequestIdRef.current || currentEditorChapterIdRef.current !== chapterId) {
+        return;
+      }
+      setChapterLinks(links);
+    } catch (err) {
+      console.warn("加载章节关联设定失败:", err);
+      if (token === linksRequestIdRef.current && currentEditorChapterIdRef.current === chapterId) {
+        setChapterLinks([]);
+      }
+    }
+  }, []);
+
+  // 加载作品权威统计数据（F03：代次保护）
+  const loadWorkStats = useCallback(async (workId: string) => {
+    if (!workId) {
+      setWorkStats(null);
+      return;
+    }
+    const token = ++statsRequestIdRef.current;
+    try {
+      const data = await fetchWorkStats(workId);
+      if (token !== statsRequestIdRef.current || activeWorkIdRef.current !== workId) {
+        return;
+      }
+      setWorkStats(data);
+    } catch (err) {
+      console.error("加载作品写作统计失败:", err);
     }
   }, []);
 
   useEffect(() => {
-    if (editorRef.current && editorRef.current.innerHTML !== selected.content) {
-      editorRef.current.innerHTML = selected.content;
+    loadWorkStatsRef.current = loadWorkStats;
+  }, [loadWorkStats]);
+
+  useEffect(() => {
+    loadWorkspaceData();
+  }, [loadWorkspaceData]);
+
+  // 仅在显式切换章节时同步编辑器 DOM，决不在保存响应到达时重置正在输入的内容
+  useEffect(() => {
+    if (selectedId && currentEditorChapterIdRef.current !== selectedId) {
+      currentEditorChapterIdRef.current = selectedId;
+      if (editorRef.current && selected) {
+        editorRef.current.innerHTML = selected.content || "<p></p>";
+      }
     }
-  }, [selectedId, selected.content]);
+  }, [selectedId, selected]);
 
-  const groupedChapters = useMemo(
-    () => [
-      { title: "卷一 · 雨夜故人", items: chapters.slice(0, 3) },
-      { title: "卷二 · 山河入梦", items: chapters.slice(3) },
-    ],
-    [chapters],
-  );
+  // 章节目录分组：支持作品下包含【未分卷】分组展示，按权威真实 sortOrder 严格排序
+  const groupedChapters = useMemo(() => {
+    if (!volumes.length) {
+      return [{ id: "default", title: "正文章节", items: [...chapters].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)) }];
+    }
+    const volumeIdSet = new Set(volumes.map((v) => v.id));
+    const groups = volumes.map((vol, idx) => ({
+      id: vol.id,
+      title: vol.title || `第${idx + 1}卷`,
+      summary: vol.summary || "",
+      items: chapters.filter((c) => c.volumeId === vol.id).sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)),
+    }));
 
-  function persist(nextChapters: Chapter[], nextSelected = selectedId, nextSettings = settings) {
-    window.localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({ chapters: nextChapters, selectedId: nextSelected, settings: nextSettings }),
-    );
+    // 未关联分卷或所属分卷已被删除的章节，统一归入【未分卷】分组
+    const unassigned = chapters.filter((c) => !c.volumeId || !volumeIdSet.has(c.volumeId)).sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+    if (unassigned.length > 0) {
+      groups.push({
+        id: "unassigned",
+        title: "未分卷",
+        summary: "",
+        items: unassigned,
+      });
+    }
+
+    return groups;
+  }, [volumes, chapters]);
+
+  // 切换分卷折叠/展开
+  function toggleVolumeCollapse(volumeId: string) {
+    setCollapsedVolumeIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(volumeId)) {
+        next.delete(volumeId);
+      } else {
+        next.add(volumeId);
+      }
+      return next;
+    });
   }
 
+  // 删除分卷（优雅移除并自动保留章节到【未分卷】）
+  async function handleDeleteVolume(volumeId: string, volumeTitle: string) {
+    if (needsCatalogResyncRef.current) {
+      alert("当前作品目录状态待确认，请先点击【重新同步目录】获取最新事实后再删除分卷。");
+      return;
+    }
+    const confirmed = window.confirm(
+      `确定要删除分卷《${volumeTitle}》吗？\n\n系统将执行安全移除：\n• 本卷中的所有章节将完整保留，并转入【未分卷】列表；\n• 卷级大纲将自动保留为作品级大纲；\n• 分卷记录本身将被移除（不会随卷删除任何正文内容）。`,
+    );
+    if (!confirmed) return;
+
+    try {
+      await deleteVolume(volumeId);
+      setVolumes((prev) => prev.filter((v) => v.id !== volumeId));
+      // 将原属于该卷的章节 volumeId 置空，在前端自动并入未分卷
+      setChapters((prev) =>
+        prev.map((c) => (c.volumeId === volumeId ? { ...c, volumeId: null } : c)),
+      );
+    } catch (err: any) {
+      console.error("删除分卷失败:", err);
+      const { isConflict, message } = categorizeMutationError(err);
+      if (activeWorkIdRef.current) {
+        worksNeedingResyncRef.current.add(activeWorkIdRef.current);
+      }
+      setNeedsCatalogResync(true);
+      needsCatalogResyncRef.current = true;
+
+      if (isConflict) {
+        alert(`删除分卷被服务端拒绝（409 冲突）：${message}。已锁定目录并尝试重新同步服务端最新事实。`);
+      } else {
+        alert(`删除分卷网络结果未知（${message}）。已锁定目录以防依据过期目录重复操作，正在尝试核实服务端事实...`);
+      }
+
+      // 尝试自动核对最新事实以恢复一致性
+      try {
+        const currentWork = activeWorkIdRef.current;
+        if (currentWork) {
+          const details = await fetchWorkDetails(currentWork);
+          if (activeWorkIdRef.current === currentWork && details.chapters) {
+            setVolumes(details.volumes || []);
+            reconcileChapterCatalog(details.chapters);
+            worksNeedingResyncRef.current.delete(currentWork);
+            setNeedsCatalogResync(false);
+            needsCatalogResyncRef.current = false;
+          }
+        }
+      } catch {}
+    }
+  }
+
+  // 新建分卷成功回调
+  function handleVolumeCreated(newVolume: Volume) {
+    setVolumes((prev) => [...prev, newVolume]);
+    // 新建的分卷默认展开
+    setCollapsedVolumeIds((prev) => {
+      const next = new Set(prev);
+      next.delete(newVolume.id);
+      return next;
+    });
+  }
+
+  /**
+   * R01 / R03 / Q01: 统一目录重同步与增删协调
+   * @param serverChapters 服务端返回的权威全书章节列表
+   * @param reorderSnapshotMap 本次排序请求前捕获的目标章节快照 Map (chapterId -> ChapterReorderSnapshot)
+   */
+  const reconcileChapterCatalog = useCallback(
+    (
+      serverChapters: Chapter[],
+      reorderSnapshotMap?: Map<string, ChapterReorderSnapshot>,
+    ) => {
+      // 1. 更新全量目录观察版本 catalogRevisionsRef
+      serverChapters.forEach((sc) => {
+        if (sc.revision !== undefined) {
+          catalogRevisionsRef.current[sc.id] = sc.revision;
+        }
+      });
+
+      // 2. Q01: 基于提交前请求版本、正文基线快照核验响应 revision
+      const confirmedTargetRevisions = new Set<string>();
+
+      if (reorderSnapshotMap) {
+        reorderSnapshotMap.forEach((snap, chId) => {
+          const sc = serverChapters.find((c) => c.id === chId);
+          if (!sc || sc.revision === undefined) return;
+
+          const verification = verifyChapterReorderRevision(snap, sc.revision);
+          if (verification.isMatch) {
+            // 目录版本匹配，允许在列表展示上确认本次结构修订
+            confirmedTargetRevisions.add(chId);
+            if (verification.shouldAdvanceContentBase) {
+              // 关键 Boundary ③: 仅当该章已实际加载正文且基线匹配时，才推进正文基线！未加载章节不建立虚假正文基线
+              contentBaseRevisionsRef.current[chId] = sc.revision;
+            }
+          } else {
+            // 响应 revision 与预期结构增量不符，或请求前基线已失真，判定为并发外部修改，绝不推进正文基线
+            console.warn(
+              `章节 ${chId} 响应核验未通过（${verification.reason}），阻止推进正文基线`,
+            );
+            if (currentEditorChapterIdRef.current === chId) {
+              setSaveState("conflict");
+              setConflictChapterId(chId);
+            }
+          }
+        });
+      }
+
+      // 3. R03 / Q01: 按权威服务器章节集合协调增删与移动，保留真实 sortOrder 与反映自身修订
+      const serverMap = new Map(serverChapters.map((c) => [c.id, c]));
+
+      setChapters((prev) => {
+        const result: LocalChapter[] = [];
+        const seenIds = new Set<string>();
+
+        // 处理本地现有章节
+        for (const local of prev) {
+          seenIds.add(local.id);
+          const serverCh = serverMap.get(local.id);
+          if (serverCh) {
+            // 服务端仍存在，更新目录元数据
+            // 若为本次核验通过的目标章节，更新 revision；否则保留 local.revision 防止未加载正文时展示跳变
+            const isConfirmedTarget = confirmedTargetRevisions.has(local.id);
+            result.push({
+              ...local,
+              volumeId: serverCh.volumeId,
+              sortOrder: serverCh.sortOrder,
+              status: serverCh.status,
+              wordCount: serverCh.wordCount ?? local.wordCount,
+              revision: isConfirmedTarget ? serverCh.revision : local.revision,
+            });
+          } else {
+            // 服务端已删除该章：检查是否有未保存草稿
+            const hasDirtyDraft =
+              pendingSaveRef.current?.chapterId === local.id ||
+              (selectedId === local.id && (draftSeqRef.current[local.id] || 0) > 0);
+            if (hasDirtyDraft) {
+              // 保护未保存草稿，标记冲突与草稿保留状态，停止静默保存
+              console.warn(`章节 ${local.id} 已在服务端被删除，保留未保存草稿`);
+              setSaveState("conflict");
+              setConflictChapterId(local.id);
+              result.push({
+                ...local,
+                title: local.title.includes("【已在服务端删除】")
+                  ? local.title
+                  : `${local.title} 【已在服务端删除】`,
+              });
+            }
+            // 无脏草稿的章节被自然清除
+          }
+        }
+
+        // 处理服务端新出现的章节（其他窗口新增）
+        for (const serverCh of serverChapters) {
+          if (!seenIds.has(serverCh.id)) {
+            result.push({
+              id: serverCh.id,
+              workId: serverCh.workId,
+              volumeId: serverCh.volumeId,
+              title: serverCh.title,
+              content: serverCh.content || "<p></p>",
+              status: serverCh.status,
+              wordCount: serverCh.wordCount ?? 0,
+              revision: serverCh.revision,
+              sortOrder: serverCh.sortOrder,
+            });
+          }
+        }
+
+        // 按权威 sortOrder 排序
+        return result.sort((a, b) => {
+          const sA = a.sortOrder ?? serverMap.get(a.id)?.sortOrder ?? 99999;
+          const sB = b.sortOrder ?? serverMap.get(b.id)?.sortOrder ?? 99999;
+          return sA - sB;
+        });
+      });
+    },
+    [selectedId],
+  );
+
+  // 分卷排序：上移/下移（Batch 2 / R02：生命周期互斥 + 串行保护）
+  async function handleMoveVolume(volumeId: string, direction: "up" | "down") {
+    // 关键 Q02：目录待同步时拦截结构写入
+    if (needsCatalogResyncRef.current) {
+      alert("当前作品目录状态待确认，请先点击【重新同步目录】获取最新事实后再执行分卷排序。");
+      return;
+    }
+
+    // 1. 同步获取互斥锁，防止任何并发连点穿透
+    if (!activeWorkId || isReorderingRef.current) return;
+    isReorderingRef.current = true;
+    const targetWorkId = activeWorkId;
+    const reqToken = ++reorderRequestIdRef.current;
+
+    // 2. 等待已有未决草稿保存完毕（此时 activeReorderPromiseRef 尚未挂载，避免循环等待）
+    let ok = false;
+    try {
+      ok = await flushPendingSave();
+    } catch {}
+
+    if (!ok || saveStateRef.current === "conflict" || saveStateRef.current === "error" || saveStateRef.current === "saving") {
+      isReorderingRef.current = false;
+      alert("当前章节有未保存草稿、正在保存中或处于版本冲突状态，已阻止排序分卷以防丢稿。请解决后再试。");
+      return;
+    }
+
+    // 检查刷盘期间作品是否发生切换
+    if (reqToken !== reorderRequestIdRef.current || activeWorkIdRef.current !== targetWorkId) {
+      isReorderingRef.current = false;
+      return;
+    }
+
+    const realVolumes = [...volumes];
+    const currentIndex = realVolumes.findIndex((v) => v.id === volumeId);
+    if (currentIndex === -1) {
+      isReorderingRef.current = false;
+      return;
+    }
+
+    const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
+    if (targetIndex < 0 || targetIndex >= realVolumes.length) {
+      isReorderingRef.current = false;
+      return;
+    }
+
+    const newVolumes = [...realVolumes];
+    const [movedVolume] = newVolumes.splice(currentIndex, 1);
+    newVolumes.splice(targetIndex, 0, movedVolume);
+
+    const volumeIds = newVolumes.map((v) => v.id);
+
+    // 乐观更新分卷列表
+    setVolumes(newVolumes);
+
+    const task = (async () => {
+      try {
+        const updatedVolumes = await reorderVolumes(targetWorkId, volumeIds);
+        if (reqToken !== reorderRequestIdRef.current || activeWorkIdRef.current !== targetWorkId) {
+          return;
+        }
+        setVolumes(updatedVolumes);
+      } catch (err: unknown) {
+        if (reqToken !== reorderRequestIdRef.current || activeWorkIdRef.current !== targetWorkId) {
+          return;
+        }
+        console.error("分卷排序失败:", err);
+        let resynced = false;
+        try {
+          const details = await fetchWorkDetails(targetWorkId);
+          if (reqToken === reorderRequestIdRef.current && activeWorkIdRef.current === targetWorkId) {
+            setVolumes(details.volumes || []);
+            if (details.chapters) {
+              reconcileChapterCatalog(details.chapters);
+            }
+            resynced = true;
+          }
+        } catch {}
+
+        if (reqToken !== reorderRequestIdRef.current || activeWorkIdRef.current !== targetWorkId) {
+          return;
+        }
+
+        if (resynced) {
+          if (activeWorkIdRef.current) worksNeedingResyncRef.current.delete(activeWorkIdRef.current);
+          alert("分卷排序未能生效，已重新同步服务端最新分卷列表。");
+        } else {
+          if (activeWorkIdRef.current) worksNeedingResyncRef.current.add(activeWorkIdRef.current);
+          setNeedsCatalogResync(true);
+          needsCatalogResyncRef.current = true;
+          alert("分卷排序遇到未知网络结果且未能重新同步分卷列表，已进入待同步状态。请检查网络后点击【重新同步目录】。");
+        }
+      } finally {
+        if (reqToken === reorderRequestIdRef.current) {
+          isReorderingRef.current = false;
+          activeReorderPromiseRef.current = null;
+        }
+      }
+    })();
+
+    activeReorderPromiseRef.current = task;
+    await task;
+
+    if (reqToken === reorderRequestIdRef.current && activeWorkIdRef.current === targetWorkId) {
+      if (pendingSaveRef.current && (saveStateRef.current as string) !== "conflict") {
+        performSave();
+      }
+    }
+  }
+
+  // 章节卷内排序：上移 / 下移（C01 / R01 / R02 / R03 / Q01 / Q02）
+  async function handleMoveChapter(chapterId: string, direction: "up" | "down") {
+    // 关键 Q02：目录待同步时拦截结构写入
+    if (needsCatalogResyncRef.current) {
+      alert("当前作品目录状态待确认，请先点击【重新同步目录】获取最新事实后再执行章节排序。");
+      return;
+    }
+
+    // 1. 同步获取互斥锁，防止连点穿透
+    if (!activeWorkId || isReorderingRef.current) return;
+    isReorderingRef.current = true;
+    const targetWorkId = activeWorkId;
+    const reqToken = ++reorderRequestIdRef.current;
+
+    // 2. 等待已有未决草稿保存完毕（此时 activeReorderPromiseRef 尚未挂载，避免循环等待）
+    let ok = false;
+    try {
+      ok = await flushPendingSave();
+    } catch {}
+
+    if (!ok || saveStateRef.current === "conflict" || saveStateRef.current === "error" || saveStateRef.current === "saving") {
+      isReorderingRef.current = false;
+      alert("当前章节有未保存草稿、正在保存中或处于版本冲突状态，已阻止排序以防丢稿。请解决后再试。");
+      return;
+    }
+
+    if (reqToken !== reorderRequestIdRef.current || activeWorkIdRef.current !== targetWorkId) {
+      isReorderingRef.current = false;
+      return;
+    }
+
+    const currentChList = [...chaptersRef.current];
+    const ch = currentChList.find((c) => c.id === chapterId);
+    if (!ch) {
+      isReorderingRef.current = false;
+      return;
+    }
+
+    const currentVolId = ch.volumeId || null;
+    const groupItems = currentChList
+      .filter((c) => (c.volumeId || null) === currentVolId)
+      .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+    const currentIndex = groupItems.findIndex((c) => c.id === chapterId);
+    if (currentIndex === -1) {
+      isReorderingRef.current = false;
+      return;
+    }
+
+    const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
+    if (targetIndex < 0 || targetIndex >= groupItems.length) {
+      isReorderingRef.current = false;
+      return;
+    }
+
+    const newGroupItems = [...groupItems];
+    const [moved] = newGroupItems.splice(currentIndex, 1);
+    newGroupItems.splice(targetIndex, 0, moved);
+
+    if (newGroupItems.length > 500) {
+      isReorderingRef.current = false;
+      alert("目标分组章节数超过 500 章限制，无法执行排序");
+      return;
+    }
+
+    // Q01: 校验目标列表每章的真实 sortOrder，缺失时先重新获取目录，不默认 0
+    const hasMissingSortOrder = newGroupItems.some((item) => item.sortOrder === undefined);
+    if (hasMissingSortOrder) {
+      isReorderingRef.current = false;
+      alert("目录排序元数据不完整，正在重新同步目录事实...");
+      try {
+        const details = await fetchWorkDetails(targetWorkId);
+        if (details.chapters) {
+          reconcileChapterCatalog(details.chapters);
+        }
+      } catch {}
+      return;
+    }
+
+    const completeTargetOrder = newGroupItems.map((c) => c.id);
+
+    // Q01: 提交前捕获目标列表每章的 request revision、volumeId、sortOrder、正文基线快照
+    const expectedRevisions: { chapterId: string; revision: number }[] = [];
+    const reorderSnapshotMap = new Map<string, ChapterReorderSnapshot>();
+
+    for (let pos = 0; pos < newGroupItems.length; pos++) {
+      const item = newGroupItems[pos];
+      const rev = catalogRevisionsRef.current[item.id] ?? item.revision;
+      if (rev === undefined) {
+        isReorderingRef.current = false;
+        alert("目录版本不完整，请先刷新目录后再试");
+        return;
+      }
+      expectedRevisions.push({ chapterId: item.id, revision: rev });
+
+      const oldVolumeId = item.volumeId ?? null;
+      const targetVolId = currentVolId ?? null;
+      const oldSortOrder = item.sortOrder!;
+      const targetPos = pos;
+      // 准则: const delta = old.volumeId !== targetVolumeId || old.sortOrder !== newPosition ? 1 : 0;
+      const delta = (oldVolumeId !== targetVolId || oldSortOrder !== targetPos) ? 1 : 0;
+
+      reorderSnapshotMap.set(item.id, {
+        chapterId: item.id,
+        requestRevision: rev,
+        contentBaseRevision: contentBaseRevisionsRef.current[item.id],
+        oldVolumeId,
+        oldSortOrder,
+        targetVolumeId: targetVolId,
+        targetPosition: targetPos,
+        expectedDelta: delta,
+      });
+    }
+
+    // 3. 挂载异步任务并协调 performSave
+    const task = (async () => {
+      try {
+        const updatedCatalog = await reorderChapters(targetWorkId, {
+          volumeId: currentVolId,
+          chapterIds: completeTargetOrder,
+          expectedRevisions,
+        });
+
+        // 迟到响应隔离
+        if (reqToken !== reorderRequestIdRef.current || activeWorkIdRef.current !== targetWorkId) {
+          return;
+        }
+
+        // Q01 / R01 / R03: 基于快照核验响应 revision，精准推进正文基线与视图修订
+        reconcileChapterCatalog(updatedCatalog, reorderSnapshotMap);
+
+      } catch (err: any) {
+        if (reqToken !== reorderRequestIdRef.current || activeWorkIdRef.current !== targetWorkId) {
+          return;
+        }
+        console.error("章节排序失败:", err);
+
+        // 409 或网络未知：暂停当前草稿自动保存，保留旧基线和本地输入
+        let resynced = false;
+        try {
+          const details = await fetchWorkDetails(targetWorkId);
+          if (reqToken === reorderRequestIdRef.current && activeWorkIdRef.current === targetWorkId) {
+            if (details.chapters) {
+              // 失败回拉绝不传入 reorderSnapshotMap，绝不推进任何章节的正文基线！
+              reconcileChapterCatalog(details.chapters);
+              resynced = true;
+            }
+          }
+        } catch (fetchErr) {
+          console.error("刷新目录元数据失败:", fetchErr);
+        }
+
+        if (reqToken !== reorderRequestIdRef.current || activeWorkIdRef.current !== targetWorkId) {
+          return;
+        }
+
+        if (!resynced) {
+          if (activeWorkIdRef.current) worksNeedingResyncRef.current.add(activeWorkIdRef.current);
+          setNeedsCatalogResync(true);
+          needsCatalogResyncRef.current = true;
+        } else {
+          if (activeWorkIdRef.current) worksNeedingResyncRef.current.delete(activeWorkIdRef.current);
+        }
+
+        if (err?.status === 409) {
+          if (resynced) {
+            alert("章节排序冲突 (409)：目录已更新为服务端最新排序与增删事实。本地草稿已完整保留，已停止自动保存，请核对后重试。");
+          } else {
+            alert("章节排序冲突 (409)，且未能重新同步目录事实。已进入待同步状态，本地草稿已妥善保留，请检查网络后点击【重新同步目录】。");
+          }
+        } else {
+          if (resynced) {
+            alert(`章节排序遇到未知网络结果 (${err?.message || "网络异常"})：本地草稿已妥善保留，目录已重新同步，请核对后再试。`);
+          } else {
+            alert(`章节排序结果待确认 (${err?.message || "网络断开"})：本地草稿已保留，未能同步完成。已进入待同步状态，请在网络恢复后点击【重新同步目录】。`);
+          }
+        }
+      } finally {
+        if (reqToken === reorderRequestIdRef.current) {
+          isReorderingRef.current = false;
+          activeReorderPromiseRef.current = null;
+        }
+      }
+    })();
+
+    activeReorderPromiseRef.current = task;
+    await task;
+
+    if (reqToken === reorderRequestIdRef.current && activeWorkIdRef.current === targetWorkId) {
+      if (pendingSaveRef.current && (saveStateRef.current as string) !== "conflict") {
+        performSave();
+      }
+    }
+  }
+
+  // 章节跨卷移动（C01 / R01 / R02 / R03 / Q01 / Q02）
+  async function handleMoveChapterToVolume(chapterId: string, targetVolumeId: string | null) {
+    // 关键 Q02：目录待同步时拦截结构写入
+    if (needsCatalogResyncRef.current) {
+      alert("当前作品目录状态待确认，请先点击【重新同步目录】获取最新事实后再执行跨卷移动。");
+      return;
+    }
+
+    // 1. 同步获取互斥锁
+    if (!activeWorkId || isReorderingRef.current) return;
+    isReorderingRef.current = true;
+    const targetWorkId = activeWorkId;
+    const reqToken = ++reorderRequestIdRef.current;
+
+    // 2. 等待已有未决草稿保存完毕
+    let ok = false;
+    try {
+      ok = await flushPendingSave();
+    } catch {}
+
+    if (!ok || saveStateRef.current === "conflict" || saveStateRef.current === "error" || saveStateRef.current === "saving") {
+      isReorderingRef.current = false;
+      alert("当前章节有未保存草稿、正在保存中或处于版本冲突状态，已阻止移动分卷以防丢稿。请解决后再试。");
+      return;
+    }
+
+    if (reqToken !== reorderRequestIdRef.current || activeWorkIdRef.current !== targetWorkId) {
+      isReorderingRef.current = false;
+      return;
+    }
+
+    const currentChList = [...chaptersRef.current];
+    const ch = currentChList.find((c) => c.id === chapterId);
+    if (!ch) {
+      isReorderingRef.current = false;
+      return;
+    }
+
+    const sourceVolId = ch.volumeId || null;
+    if (sourceVolId === targetVolumeId) {
+      isReorderingRef.current = false;
+      return;
+    }
+
+    const targetGroupExisting = currentChList
+      .filter((c) => (c.volumeId || null) === targetVolumeId && c.id !== chapterId)
+      .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+    const newGroupItems = [...targetGroupExisting, ch];
+
+    if (newGroupItems.length > 500) {
+      isReorderingRef.current = false;
+      alert("目标分卷章节数超过 500 章限制，无法移入该卷");
+      return;
+    }
+
+    // Q01: 校验目标列表每章的真实 sortOrder，缺失时先重新获取目录，不默认 0
+    const hasMissingSortOrder = newGroupItems.some((item) => item.sortOrder === undefined);
+    if (hasMissingSortOrder) {
+      isReorderingRef.current = false;
+      alert("目录排序元数据不完整，正在重新同步目录事实...");
+      try {
+        const details = await fetchWorkDetails(targetWorkId);
+        if (details.chapters) {
+          reconcileChapterCatalog(details.chapters);
+        }
+      } catch {}
+      return;
+    }
+
+    const completeTargetOrder = newGroupItems.map((c) => c.id);
+
+    // Q01: 提交前捕获目标列表每章的 request revision、volumeId、sortOrder、正文基线快照
+    const expectedRevisions: { chapterId: string; revision: number }[] = [];
+    const reorderSnapshotMap = new Map<string, ChapterReorderSnapshot>();
+
+    for (let pos = 0; pos < newGroupItems.length; pos++) {
+      const item = newGroupItems[pos];
+      const rev = catalogRevisionsRef.current[item.id] ?? item.revision;
+      if (rev === undefined) {
+        isReorderingRef.current = false;
+        alert("目录版本不完整，请先刷新目录后再试");
+        return;
+      }
+      expectedRevisions.push({ chapterId: item.id, revision: rev });
+
+      const oldVolumeId = item.volumeId ?? null;
+      const targetVolId = targetVolumeId ?? null;
+      const oldSortOrder = item.sortOrder!;
+      const targetPos = pos;
+      // 准则: const delta = old.volumeId !== targetVolumeId || old.sortOrder !== newPosition ? 1 : 0;
+      const delta = (oldVolumeId !== targetVolId || oldSortOrder !== targetPos) ? 1 : 0;
+
+      reorderSnapshotMap.set(item.id, {
+        chapterId: item.id,
+        requestRevision: rev,
+        contentBaseRevision: contentBaseRevisionsRef.current[item.id],
+        oldVolumeId,
+        oldSortOrder,
+        targetVolumeId: targetVolId,
+        targetPosition: targetPos,
+        expectedDelta: delta,
+      });
+    }
+
+    // 3. 挂载异步任务
+    const task = (async () => {
+      try {
+        const updatedCatalog = await reorderChapters(targetWorkId, {
+          volumeId: targetVolumeId,
+          chapterIds: completeTargetOrder,
+          expectedRevisions,
+        });
+
+        if (reqToken !== reorderRequestIdRef.current || activeWorkIdRef.current !== targetWorkId) {
+          return;
+        }
+
+        // 跨卷后自动展开目标卷
+        if (targetVolumeId) {
+          setCollapsedVolumeIds((prev) => {
+            if (prev.has(targetVolumeId)) {
+              const next = new Set(prev);
+              next.delete(targetVolumeId);
+              return next;
+            }
+            return prev;
+          });
+        }
+
+        // Q01 / R01 / R03: 基于快照核验响应 revision，精准推进正文基线与视图修订
+        reconcileChapterCatalog(updatedCatalog, reorderSnapshotMap);
+
+      } catch (err: any) {
+        if (reqToken !== reorderRequestIdRef.current || activeWorkIdRef.current !== targetWorkId) {
+          return;
+        }
+        console.error("跨卷移动章节失败:", err);
+
+        let resynced = false;
+        try {
+          const details = await fetchWorkDetails(targetWorkId);
+          if (reqToken === reorderRequestIdRef.current && activeWorkIdRef.current === targetWorkId) {
+            if (details.chapters) {
+              reconcileChapterCatalog(details.chapters);
+              resynced = true;
+            }
+          }
+        } catch (fetchErr) {
+          console.error("刷新目录元数据失败:", fetchErr);
+        }
+
+        if (reqToken !== reorderRequestIdRef.current || activeWorkIdRef.current !== targetWorkId) {
+          return;
+        }
+
+        if (!resynced) {
+          if (activeWorkIdRef.current) worksNeedingResyncRef.current.add(activeWorkIdRef.current);
+          setNeedsCatalogResync(true);
+          needsCatalogResyncRef.current = true;
+        } else {
+          if (activeWorkIdRef.current) worksNeedingResyncRef.current.delete(activeWorkIdRef.current);
+        }
+
+        if (err?.status === 409) {
+          if (resynced) {
+            alert("跨卷移动冲突 (409)：目标卷或章节已被其他端更新，已重新同步最新目录与增删事实。本地草稿已保留，请核对后重试。");
+          } else {
+            alert("跨卷移动冲突 (409)，且未能重新同步服务端目录。已进入待同步状态，本地草稿已保留，请检查网络后点击【重新同步目录】。");
+          }
+        } else {
+          if (resynced) {
+            alert(`跨卷移动结果待确认 (${err?.message || "网络异常"})：本地草稿已妥善保留，目录已重新同步，请核对后再试。`);
+          } else {
+            alert(`跨卷移动结果待确认 (${err?.message || "网络断开"})：本地草稿已妥善保留，未能同步完成。已进入待同步状态，请在网络恢复后点击【重新同步目录】。`);
+          }
+        }
+      } finally {
+        if (reqToken === reorderRequestIdRef.current) {
+          isReorderingRef.current = false;
+          activeReorderPromiseRef.current = null;
+        }
+      }
+    })();
+
+    activeReorderPromiseRef.current = task;
+    await task;
+
+    if (reqToken === reorderRequestIdRef.current && activeWorkIdRef.current === targetWorkId) {
+      if (pendingSaveRef.current && (saveStateRef.current as string) !== "conflict") {
+        performSave();
+      }
+    }
+  }
+
+  // 切换作品
+  async function handleSelectWork(workId: string) {
+    if (workId === activeWorkId) return;
+    // 切换作品前立即刷盘保存未完成的防抖草稿，杜绝静默丢稿
+    const ok = await flushPendingSave();
+    const hasPending = pendingSaveRef.current !== null;
+    const isSaving = activeSavePromiseRef.current !== null || saveStateRef.current === "saving";
+    const isConflict = saveStateRef.current === "conflict";
+    const switchCheck = canSwitchWork(hasPending, isSaving, isConflict);
+    if (!switchCheck.allowed || (!ok && hasPending)) {
+      alert(switchCheck.errorMessage || "当前章节有尚未保存的内容，请先解决后再切换作品。");
+      return;
+    }
+    try {
+      resyncRequestIdRef.current++;
+      await switchActiveWorkspace({ workId });
+      setActiveWorkId(workId);
+      await loadWorkspaceData(workId);
+    } catch (err) {
+      console.error("切换作品失败:", err);
+    }
+  }
+
+  // 归档作品（增加草稿防丢保护）
+  async function handleArchiveWork(workId: string) {
+    const ok = await flushPendingSave();
+    const hasPending = pendingSaveRef.current !== null;
+    const isSaving = activeSavePromiseRef.current !== null || saveStateRef.current === "saving";
+    const isConflict = saveStateRef.current === "conflict";
+    const switchCheck = canSwitchWork(hasPending, isSaving, isConflict);
+    if (!switchCheck.allowed || (!ok && hasPending)) {
+      alert(switchCheck.errorMessage || "当前章节有尚未保存的内容，已阻止归档以防丢稿。");
+      return;
+    }
+    try {
+      await archiveWork(workId);
+      await loadWorkspaceData();
+    } catch (err) {
+      console.error("归档作品失败:", err);
+    }
+  }
+
+  // 新建作品前置拦截钩子（F01：提交创建前强制刷盘并检查是否发生保存失败/冲突）
+  const handleBeforeCreateWork = async (): Promise<boolean> => {
+    const ok = await flushPendingSave();
+    const hasPending = pendingSaveRef.current !== null;
+    const isSaving = activeSavePromiseRef.current !== null || saveStateRef.current === "saving";
+    const isConflict = saveStateRef.current === "conflict";
+    const switchCheck = canSwitchWork(hasPending, isSaving, isConflict);
+    if (!switchCheck.allowed || (!ok && hasPending)) {
+      alert(switchCheck.errorMessage || "当前章节有未保存草稿，请先解决保存问题后再创建新作品，以防草稿丢失。");
+      return false;
+    }
+    return true;
+  };
+
+  // 新建作品成功回调（F01：严格校验保存状态，阻断脏数据切走）
+  async function handleWorkCreated(newWork: Work) {
+    const ok = await flushPendingSave();
+    const hasPending = pendingSaveRef.current !== null;
+    const isSaving = activeSavePromiseRef.current !== null || saveStateRef.current === "saving";
+    const isConflict = saveStateRef.current === "conflict";
+    const switchCheck = canSwitchWork(hasPending, isSaving, isConflict);
+    if (!switchCheck.allowed || (!ok && hasPending)) {
+      alert(switchCheck.errorMessage || "当前章节有未保存草稿，已阻止自动切换至新作品。");
+      return;
+    }
+    await switchActiveWorkspace({ workId: newWork.id });
+    await loadWorkspaceData(newWork.id);
+  }
+
+  // 切换章节（F03：请求代次 Token 隔离迟到响应）
+  async function selectChapter(id: string) {
+    if (id === selectedId) return;
+    // 切换章节前立即刷盘保存当前未完成的草稿，防止静默丢稿
+    const ok = await flushPendingSave();
+    if (!ok || saveStateRef.current === "conflict" || saveStateRef.current === "error" || saveStateRef.current === "saving") {
+      alert("当前章节有未保存草稿、正在保存中或处于版本冲突状态，已阻止切换章节以防丢稿。请解决后再切换。");
+      return;
+    }
+
+    const chReqToken = ++chapterRequestIdRef.current;
+    setSelectedId(id);
+    currentEditorChapterIdRef.current = id;
+    setConflictChapterId(null);
+    setConflictServerChapter(null);
+
+    loadChapterLinks(id);
+
+    try {
+      const fullCh = await fetchChapter(id);
+      if (chReqToken !== chapterRequestIdRef.current || currentEditorChapterIdRef.current !== id) {
+        return;
+      }
+      if (fullCh.revision !== undefined) {
+        contentBaseRevisionsRef.current[id] = fullCh.revision;
+        catalogRevisionsRef.current[id] = fullCh.revision;
+      }
+      setChapters((prev) =>
+        prev.map((c) =>
+          c.id === id
+            ? {
+                ...c,
+                content: fullCh.content,
+                revision: fullCh.revision,
+                wordCount: fullCh.wordCount,
+                sortOrder: fullCh.sortOrder !== undefined ? fullCh.sortOrder : c.sortOrder,
+              }
+            : c,
+        ),
+      );
+      if (editorRef.current && currentEditorChapterIdRef.current === id) {
+        editorRef.current.innerHTML = fullCh.content || "<p></p>";
+      }
+      if (activeWorkId) {
+        switchActiveWorkspace({ workId: activeWorkId, chapterId: id }).catch(() => {});
+      }
+    } catch (e) {
+      if (chReqToken !== chapterRequestIdRef.current || currentEditorChapterIdRef.current !== id) {
+        return;
+      }
+      const found = chapters.find((c) => c.id === id);
+      if (found && editorRef.current) {
+        editorRef.current.innerHTML = found.content;
+      }
+    }
+  }
+
+  // 新建章节（支持指定目标分卷）
+  async function addChapter(targetVolumeId?: string) {
+    if (!activeWorkId || isCreatingChapterRef.current) return;
+
+    // 关键 Q02：目录待同步时拦截结构写入
+    if (needsCatalogResyncRef.current) {
+      alert("当前作品目录状态待确认，请先点击【重新同步目录】获取最新事实后再新建章节。");
+      return;
+    }
+
+    // 新增章节前立即刷盘当前草稿
+    const ok = await flushPendingSave();
+    if (!ok || saveStateRef.current === "conflict" || saveStateRef.current === "error" || saveStateRef.current === "saving") {
+      alert("当前草稿未保存、正在保存中或处于版本冲突，已阻止新建章节以防丢稿。");
+      return;
+    }
+
+    // 结构操作使用独立进度状态，绝不写入正文 saveState
+    isCreatingChapterRef.current = true;
+    setIsCreatingChapter(true);
+
+    try {
+      const nextTitle = `第${chapters.length + 1}章 未命名章节`;
+      // 如果指定了目标卷，使用指定卷；否则优先使用当前选中章节所在的卷，或第一个卷
+      const currentCh = chapters.find((c) => c.id === selectedId);
+      const chosenVolId =
+        targetVolumeId !== undefined
+          ? targetVolumeId
+          : currentCh?.volumeId || volumes[0]?.id || null;
+
+      const newCh = await createChapter(activeWorkId, {
+        title: nextTitle,
+        volumeId: chosenVolId,
+        content: "<p></p>",
+      });
+
+      const formatted: LocalChapter = {
+        id: newCh.id,
+        workId: newCh.workId,
+        volumeId: newCh.volumeId,
+        title: newCh.title,
+        content: newCh.content || "<p></p>",
+        status: newCh.status,
+        wordCount: newCh.wordCount ?? 0,
+        revision: newCh.revision,
+        sortOrder: newCh.sortOrder,
+      };
+
+      if (newCh.revision !== undefined) {
+        contentBaseRevisionsRef.current[newCh.id] = newCh.revision;
+        catalogRevisionsRef.current[newCh.id] = newCh.revision;
+      }
+
+      setChapters((prev) => [...prev, formatted]);
+      setSelectedId(newCh.id);
+      currentEditorChapterIdRef.current = newCh.id;
+      setConflictChapterId(null);
+      setConflictServerChapter(null);
+      setChapterLinks([]);
+
+      // 新建成功后新章与服务端一致，草稿状态重置为 saved
+      pendingSaveRef.current = null;
+      setSaveState("saved");
+
+      // 若所属分卷当前处于折叠状态，新建章节后自动展开该卷
+      if (chosenVolId && collapsedVolumeIds.has(chosenVolId)) {
+        setCollapsedVolumeIds((prev) => {
+          const next = new Set(prev);
+          next.delete(chosenVolId);
+          return next;
+        });
+      }
+
+      if (editorRef.current) {
+        editorRef.current.innerHTML = formatted.content;
+      }
+    } catch (err: any) {
+      console.error("新建章节失败:", err);
+      // 关键修复：结构操作异常与正文草稿保存状态彻底解耦，绝不写入正文 saveState
+      // 将当前作品加入待同步集合，锁定目录结构写入
+      const { isConflict, message } = categorizeMutationError(err);
+      if (activeWorkIdRef.current) {
+        worksNeedingResyncRef.current.add(activeWorkIdRef.current);
+      }
+      setNeedsCatalogResync(true);
+      needsCatalogResyncRef.current = true;
+
+      if (isConflict) {
+        alert(`新建章节被服务端拒绝（409 冲突）：${message}。已锁定目录并尝试重新同步服务端最新事实。`);
+      } else {
+        alert(`新建章节网络结果未知（${message}）。已锁定目录以防重复创建，正在尝试核实是否已在服务端创建...`);
+      }
+
+      // 尝试自动核对最新事实以恢复一致性
+      try {
+        const currentWork = activeWorkIdRef.current;
+        if (currentWork) {
+          const details = await fetchWorkDetails(currentWork);
+          if (activeWorkIdRef.current === currentWork && details.chapters) {
+            setVolumes(details.volumes || []);
+            reconcileChapterCatalog(details.chapters);
+            worksNeedingResyncRef.current.delete(currentWork);
+            setNeedsCatalogResync(false);
+            needsCatalogResyncRef.current = false;
+          }
+        }
+      } catch {}
+    } finally {
+      isCreatingChapterRef.current = false;
+      setIsCreatingChapter(false);
+    }
+  }
+
+  // 编辑器正文变动保存（带版本号防冲突与串行队列）
   function handleEditorInput() {
     const content = editorRef.current?.innerHTML ?? "";
-    const next = chapters.map((chapter) =>
-      chapter.id === selectedId ? { ...chapter, content } : chapter,
+    const oldWords = plainText(selected?.content || "").length;
+    const newWords = plainText(content).length;
+    const diff = newWords - oldWords;
+    if (diff > 0) {
+      addTodayWords(diff);
+    }
+
+    if (!selectedId) return;
+    draftSeqRef.current[selectedId] = (draftSeqRef.current[selectedId] || 0) + 1;
+
+    setChapters((prev) =>
+      prev.map((chapter) =>
+        chapter.id === selectedId
+          ? { ...chapter, content, wordCount: newWords }
+          : chapter,
+      ),
     );
-    setChapters(next);
     setSaveState("saving");
+
+    pendingSaveRef.current = {
+      chapterId: selectedId,
+      title: pendingSaveRef.current?.chapterId === selectedId ? pendingSaveRef.current.title : undefined,
+      content,
+    };
+
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => {
-      persist(next);
-      setSaveState("saved");
+    saveTimer.current = setTimeout(async () => {
+      await performSave();
     }, 650);
   }
 
-  function selectChapter(id: string) {
-    setSelectedId(id);
-    persist(chapters, id);
-  }
+  // 章节标题变动保存
+  function handleTitleChange(newTitle: string) {
+    if (!selectedId) return;
+    draftSeqRef.current[selectedId] = (draftSeqRef.current[selectedId] || 0) + 1;
 
-  function addChapter() {
-    const id = `chapter-${Date.now()}`;
-    const next = [
-      ...chapters,
-      {
-        id,
-        title: `第${chapters.length + 1}章 未命名章节`,
-        content: "<p>从这里开始新的故事……</p>",
-        status: "draft" as const,
-      },
-    ];
-    setChapters(next);
-    setSelectedId(id);
-    persist(next, id);
+    setChapters((prev) =>
+      prev.map((chapter) =>
+        chapter.id === selectedId ? { ...chapter, title: newTitle } : chapter,
+      ),
+    );
+    setSaveState("saving");
+
+    pendingSaveRef.current = {
+      chapterId: selectedId,
+      title: newTitle,
+      content: pendingSaveRef.current?.chapterId === selectedId ? pendingSaveRef.current.content : undefined,
+    };
+
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(async () => {
+      await performSave();
+    }, 650);
   }
 
   function format(command: string, value?: string) {
@@ -216,26 +1989,564 @@ export default function Home() {
     handleEditorInput();
   }
 
-  function runAiPreview(action: string) {
-    setIsGenerating(true);
-    setAiResult("");
-    window.setTimeout(() => {
-      const samples: Record<string, string> = {
-        continue:
-          "门轴发出一声极轻的呻吟。沈砚没有抬头，只将那封信压在掌下。雨幕里，一双沾着泥水的靴子停在门槛之外。",
-        polish:
-          "雨落三更，青石巷里的灯火已熄去大半。沈砚收好最后一册旧书，正欲闭门，门外忽然传来三声叩响。",
-        brainstorm:
-          "来客并非故人，而是携带故人记忆的傀儡；无字旧书会在接触旧物时显现线索；北山禁地与沈砚缺失的十年记忆相连。",
-      };
-      setAiResult(samples[action] ?? samples.continue);
-      setIsGenerating(false);
-    }, 720);
+  // 引用格式切换：支持对已引用的块回退取消为常规段落
+  function toggleBlockquote() {
+    if (!editorRef.current) return;
+    editorRef.current.focus();
+
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) {
+      format("formatBlock", "blockquote");
+      return;
+    }
+
+    let node: Node | null = selection.anchorNode;
+    let blockquoteNode: HTMLElement | null = null;
+    while (node && node !== editorRef.current) {
+      if (node.nodeType === Node.ELEMENT_NODE && (node as HTMLElement).tagName.toLowerCase() === "blockquote") {
+        blockquoteNode = node as HTMLElement;
+        break;
+      }
+      node = node.parentNode;
+    }
+
+    if (blockquoteNode) {
+      // 当前已经在 blockquote 中，回退取消为常规段落
+      const executed = document.execCommand("formatBlock", false, "<p>");
+      if (!executed) {
+        document.execCommand("formatBlock", false, "p");
+      }
+      // 容错兜底：若浏览器未解包 blockquote，手动将其内部内容替换为普通段落节点
+      if (blockquoteNode.parentNode && blockquoteNode.tagName.toLowerCase() === "blockquote") {
+        const parent = blockquoteNode.parentNode;
+        const fragment = document.createDocumentFragment();
+        const hasBlockChildren = Array.from(blockquoteNode.children).some((child) =>
+          ["P", "DIV", "H1", "H2", "H3", "H4", "H5", "H6"].includes(child.tagName),
+        );
+        if (hasBlockChildren) {
+          while (blockquoteNode.firstChild) {
+            fragment.appendChild(blockquoteNode.firstChild);
+          }
+        } else {
+          const p = document.createElement("p");
+          while (blockquoteNode.firstChild) {
+            p.appendChild(blockquoteNode.firstChild);
+          }
+          fragment.appendChild(p);
+        }
+        parent.replaceChild(fragment, blockquoteNode);
+      }
+    } else {
+      document.execCommand("formatBlock", false, "blockquote");
+    }
+    handleEditorInput();
   }
 
-  function saveSettings() {
-    persist(chapters, selectedId, settings);
+  // 标题格式切换：已是标题时回退为普通段落
+  function toggleHeading(tag: string = "h2") {
+    if (!editorRef.current) return;
+    editorRef.current.focus();
+
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) {
+      format("formatBlock", tag);
+      return;
+    }
+
+    let node: Node | null = selection.anchorNode;
+    let headingNode: HTMLElement | null = null;
+    while (node && node !== editorRef.current) {
+      if (node.nodeType === Node.ELEMENT_NODE && (node as HTMLElement).tagName.toLowerCase() === tag.toLowerCase()) {
+        headingNode = node as HTMLElement;
+        break;
+      }
+      node = node.parentNode;
+    }
+
+    if (headingNode) {
+      const executed = document.execCommand("formatBlock", false, "<p>");
+      if (!executed) {
+        document.execCommand("formatBlock", false, "p");
+      }
+    } else {
+      document.execCommand("formatBlock", false, tag);
+    }
+    handleEditorInput();
   }
+
+  // 历史版本恢复完成回调：用服务端返回的全新 revision 和正文同步状态与编辑器（F02 / R01）
+  function handleVersionRestored(restoredChapter: Chapter) {
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
+    pendingSaveRef.current = null;
+    contentBaseRevisionsRef.current[restoredChapter.id] = restoredChapter.revision;
+    catalogRevisionsRef.current[restoredChapter.id] = restoredChapter.revision;
+    draftSeqRef.current[restoredChapter.id] = (draftSeqRef.current[restoredChapter.id] || 0) + 1;
+
+    setChapters((prev) =>
+      prev.map((c) =>
+        c.id === restoredChapter.id
+          ? {
+              ...c,
+              title: restoredChapter.title,
+              content: restoredChapter.content || "<p></p>",
+              revision: restoredChapter.revision,
+              wordCount: restoredChapter.wordCount,
+            }
+          : c,
+      ),
+    );
+    if (editorRef.current && selectedId === restoredChapter.id) {
+      editorRef.current.innerHTML = restoredChapter.content || "<p></p>";
+    }
+    setSaveState("saved");
+    setConflictChapterId(null);
+    setConflictServerChapter(null);
+
+    if (activeWorkIdRef.current && loadWorkStatsRef.current) {
+      loadWorkStatsRef.current(activeWorkIdRef.current);
+    }
+  }
+
+  // 章节软删除移入回收站（可随时一键恢复）
+  async function handleSoftDeleteChapter(chapterId: string, e: React.MouseEvent) {
+    e.stopPropagation();
+
+    // 关键 Q02：目录待同步时拦截结构写入
+    if (needsCatalogResyncRef.current) {
+      alert("当前作品目录状态待确认，请先点击【重新同步目录】获取最新事实后再删除章节。");
+      return;
+    }
+
+    // 软删除前必须先等待待保存草稿串行保存完毕，若失败或冲突则阻止危险操作
+    const ok = await flushPendingSave();
+    if (!ok || saveStateRef.current === "conflict" || saveStateRef.current === "error" || saveStateRef.current === "saving") {
+      alert("当前章节有未保存草稿、正在保存中或处于版本冲突状态，已阻止移入回收站以防丢稿。请解决后再试。");
+      return;
+    }
+
+    const ch = chapters.find((c) => c.id === chapterId);
+    const chTitle = ch?.title || "该章节";
+    if (!confirm(`确定将《${chTitle}》移入回收站吗？\n章节内容将被妥善保留，可在顶部回收站随时一键恢复。`)) {
+      return;
+    }
+    try {
+      await softDeleteChapter(chapterId);
+      const remaining = chapters.filter((c) => c.id !== chapterId);
+      setChapters(remaining);
+      if (selectedId === chapterId) {
+        const next = remaining[0]?.id || null;
+        if (next) {
+          selectChapter(next);
+        } else {
+          setSelectedId(null);
+          currentEditorChapterIdRef.current = null;
+          setChapterLinks([]);
+          if (editorRef.current) {
+            editorRef.current.innerHTML = "<p></p>";
+          }
+        }
+      }
+    } catch (err: unknown) {
+      console.error("移入回收站失败:", err);
+      const { isConflict, message } = categorizeMutationError(err);
+      if (activeWorkIdRef.current) {
+        worksNeedingResyncRef.current.add(activeWorkIdRef.current);
+      }
+      setNeedsCatalogResync(true);
+      needsCatalogResyncRef.current = true;
+
+      if (isConflict) {
+        alert(`移入回收站被服务端拒绝（409 冲突）：${message}。已锁定目录并尝试重新同步服务端最新事实。`);
+      } else {
+        alert(`移入回收站网络结果未知（${message}）。已锁定目录以防依据过期目录重复操作，正在尝试核实服务端事实...`);
+      }
+
+      // 尝试自动核对最新事实以恢复一致性
+      try {
+        const currentWork = activeWorkIdRef.current;
+        if (currentWork) {
+          const details = await fetchWorkDetails(currentWork);
+          if (activeWorkIdRef.current === currentWork && details.chapters) {
+            setVolumes(details.volumes || []);
+            reconcileChapterCatalog(details.chapters);
+            worksNeedingResyncRef.current.delete(currentWork);
+            setNeedsCatalogResync(false);
+            needsCatalogResyncRef.current = false;
+          }
+        }
+      } catch {}
+    }
+  }
+
+  // 历史版本回滚恢复（必须先刷新未保存草稿，带 expectedRevision 与显式冲突处理，同步基线）
+  async function handleRestoreContent(restoredText: string) {
+    if (!selectedId) return;
+    // 恢复前先完成待保存草稿保存，防止防抖草稿被粗暴清空丢失
+    const ok = await flushPendingSave();
+    if (!ok || saveStateRef.current === "conflict" || saveStateRef.current === "error" || saveStateRef.current === "saving") {
+      alert("当前草稿存在未决保存、正在保存或处于版本冲突，已阻止历史版本恢复以防丢稿。");
+      return;
+    }
+
+    const html = restoredText
+      .split("\n")
+      .filter(Boolean)
+      .map((p) => `<p>${p}</p>`)
+      .join("");
+
+    setChapters((prev) =>
+      prev.map((c) => (c.id === selectedId ? { ...c, content: html } : c)),
+    );
+    if (editorRef.current) {
+      editorRef.current.innerHTML = html;
+    }
+
+    setSaveState("saving");
+    try {
+      const currentCh = chaptersRef.current.find((c) => c.id === selectedId);
+      const updated = await saveChapter(selectedId, {
+        content: html,
+        expectedRevision: currentCh?.revision,
+      });
+      contentBaseRevisionsRef.current[selectedId] = updated.revision;
+      catalogRevisionsRef.current[selectedId] = updated.revision;
+      draftSeqRef.current[selectedId] = (draftSeqRef.current[selectedId] || 0) + 1;
+      setChapters((prev) =>
+        prev.map((c) =>
+          c.id === selectedId
+            ? { ...c, revision: updated.revision, wordCount: updated.wordCount }
+            : c,
+        ),
+      );
+      setSaveState("saved");
+      setConflictChapterId(null);
+      setConflictServerChapter(null);
+
+      if (activeWorkIdRef.current && loadWorkStatsRef.current) {
+        loadWorkStatsRef.current(activeWorkIdRef.current);
+      }
+    } catch (err: unknown) {
+      if (err instanceof ChapterConflictError || (err as any)?.status === 409) {
+        console.warn("恢复历史版本时发生版本冲突 (409):", err);
+        setSaveState("conflict");
+        setConflictChapterId(selectedId);
+        try {
+          const latest = await fetchChapter(selectedId);
+          catalogRevisionsRef.current[selectedId] = latest.revision;
+          setConflictServerChapter({
+            title: latest.title,
+            content: latest.content,
+            revision: latest.revision,
+          });
+        } catch {}
+      } else {
+        console.error("恢复历史版本失败:", err);
+        setSaveState("error");
+      }
+    }
+  }
+
+  // 冲突解决：拉取服务器最新版本覆盖本地（R01: 同步基线与观察版本）
+  async function handlePullServerVersion() {
+    if (!selectedId) return;
+    try {
+      const latest = await fetchChapter(selectedId);
+      contentBaseRevisionsRef.current[selectedId] = latest.revision;
+      catalogRevisionsRef.current[selectedId] = latest.revision;
+      draftSeqRef.current[selectedId] = (draftSeqRef.current[selectedId] || 0) + 1;
+      if (pendingSaveRef.current?.chapterId === selectedId) {
+        pendingSaveRef.current = null;
+      }
+      setChapters((prev) =>
+        prev.map((c) =>
+          c.id === selectedId
+            ? {
+                ...c,
+                title: latest.title,
+                content: latest.content,
+                revision: latest.revision,
+                wordCount: latest.wordCount,
+              }
+            : c,
+        ),
+      );
+      if (editorRef.current) {
+        editorRef.current.innerHTML = latest.content || "<p></p>";
+      }
+      setSaveState("saved");
+      setConflictChapterId(null);
+      setConflictServerChapter(null);
+    } catch (err) {
+      console.error("拉取服务器版本失败:", err);
+    }
+  }
+
+  // 冲突解决：以当前草稿强制覆盖服务端版本（R01: 推进基线与观察版本）
+  async function handleForceOverwrite() {
+    if (!selectedId) return;
+    try {
+      setSaveState("saving");
+      // 获取当前服务器最新的 revision，以此作为 expectedRevision 覆盖保存当前草稿
+      const latest = await fetchChapter(selectedId);
+      const pending = pendingSaveRef.current;
+      const currentContent =
+        pending?.chapterId === selectedId && pending.content !== undefined
+          ? pending.content
+          : (editorRef.current?.innerHTML ?? selected.content);
+      const currentTitle =
+        pending?.chapterId === selectedId && pending.title !== undefined
+          ? pending.title
+          : selected.title;
+      const updated = await saveChapter(selectedId, {
+        title: currentTitle,
+        content: currentContent,
+        expectedRevision: latest.revision,
+      });
+      contentBaseRevisionsRef.current[selectedId] = updated.revision;
+      catalogRevisionsRef.current[selectedId] = updated.revision;
+      draftSeqRef.current[selectedId] = (draftSeqRef.current[selectedId] || 0) + 1;
+      if (pendingSaveRef.current?.chapterId === selectedId) {
+        pendingSaveRef.current = null;
+      }
+      setChapters((prev) =>
+        prev.map((c) =>
+          c.id === selectedId
+            ? {
+                ...c,
+                title: updated.title,
+                content: updated.content,
+                revision: updated.revision,
+                wordCount: updated.wordCount,
+              }
+            : c,
+        ),
+      );
+      setSaveState("saved");
+      setConflictChapterId(null);
+      setConflictServerChapter(null);
+
+      if (activeWorkIdRef.current && loadWorkStatsRef.current) {
+        loadWorkStatsRef.current(activeWorkIdRef.current);
+      }
+    } catch (err) {
+      console.error("强制覆盖保存失败:", err);
+      setSaveState("error");
+    }
+  }
+
+  // 冲突解决：安全复制草稿至剪贴板
+  function handleCopyDraft() {
+    const pending = pendingSaveRef.current;
+    const rawContent =
+      pending?.chapterId === selectedId && pending.content !== undefined
+        ? pending.content
+        : (editorRef.current?.innerHTML ?? selected.content);
+    const textToCopy = plainText(rawContent);
+    navigator.clipboard.writeText(textToCopy);
+    setCopiedToast(true);
+    setTimeout(() => setCopiedToast(false), 2000);
+  }
+
+  // Q02 Boundary ④: 显式重新同步目录入口（固定作品 ID 与请求代次，迟到响应不得污染切换后的作品）
+  async function handleManualResyncCatalog() {
+    if (!activeWorkId || isResyncingCatalog) return;
+    setIsResyncingCatalog(true);
+    const targetWorkId = activeWorkId;
+    const reqToken = ++resyncRequestIdRef.current;
+
+    try {
+      const details = await fetchWorkDetails(targetWorkId);
+      const check = canApplyResyncResponse(
+        targetWorkId,
+        activeWorkIdRef.current,
+        reqToken,
+        resyncRequestIdRef.current,
+        details?.chapters,
+      );
+
+      if (!check.canApply) {
+        console.warn(`忽略失效或迟到的目录重同步响应 (${check.rejectReason})`);
+        return;
+      }
+
+      if (details.volumes) {
+        setVolumes(details.volumes);
+      }
+      if (check.canClearGate && details.chapters) {
+        reconcileChapterCatalog(details.chapters);
+        worksNeedingResyncRef.current.delete(targetWorkId);
+        setNeedsCatalogResync(false);
+        needsCatalogResyncRef.current = false;
+        alert("目录已成功重新同步至服务端最新事实。");
+      } else {
+        alert("重新同步未能获取有效章节列表，已保留目录待同步门禁。");
+      }
+    } catch (err: any) {
+      if (reqToken === resyncRequestIdRef.current && activeWorkIdRef.current === targetWorkId) {
+        alert(`重新同步目录失败 (${err?.message || "网络异常"})，请检查网络后重试。`);
+      }
+    } finally {
+      if (reqToken === resyncRequestIdRef.current) {
+        setIsResyncingCatalog(false);
+      }
+    }
+  }
+
+  // Q02: 对已在服务端被删除但保留了未保存草稿的章节，支持一键恢复为新章节继续创作
+  async function handleRestoreAsNewChapter() {
+    if (!activeWorkId || !selected) return;
+    try {
+      const rawTitle = selected.title.replace(/【已在服务端删除】/g, "").trim() || "未命名章节";
+      const currentContent = editorRef.current?.innerHTML ?? selected.content;
+      const newCh = await createChapter(activeWorkId, {
+        title: rawTitle,
+        volumeId: selected.volumeId || null,
+        content: currentContent,
+      });
+      setChapters((prev) =>
+        prev
+          .filter((c) => c.id !== selected.id)
+          .concat({
+            id: newCh.id,
+            workId: newCh.workId,
+            volumeId: newCh.volumeId,
+            title: newCh.title,
+            content: newCh.content || "<p></p>",
+            status: newCh.status,
+            wordCount: newCh.wordCount ?? 0,
+            revision: newCh.revision,
+            sortOrder: newCh.sortOrder,
+          }),
+      );
+      if (newCh.revision !== undefined) {
+        contentBaseRevisionsRef.current[newCh.id] = newCh.revision;
+        catalogRevisionsRef.current[newCh.id] = newCh.revision;
+      }
+      delete contentBaseRevisionsRef.current[selected.id];
+      delete catalogRevisionsRef.current[selected.id];
+      delete draftSeqRef.current[selected.id];
+      setSelectedId(newCh.id);
+      currentEditorChapterIdRef.current = newCh.id;
+      setSaveState("saved");
+      setConflictChapterId(null);
+      setConflictServerChapter(null);
+      alert(`草稿已成功恢复并保存为新章节《${newCh.title}》！`);
+    } catch (err: any) {
+      alert(`恢复为新章节失败: ${err?.message || "网络异常"}`);
+    }
+  }
+
+  function handlePaperScroll() {
+    const el = paperScrollRef.current;
+    if (!el) return;
+    const maxScroll = el.scrollHeight - el.clientHeight;
+    if (maxScroll <= 0) {
+      setScrollProgress(0);
+    } else {
+      const p = Math.min(100, Math.max(0, Math.round((el.scrollTop / maxScroll) * 100)));
+      setScrollProgress(p);
+    }
+  }
+
+  function scrollToTop() {
+    paperScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function scrollToBottom() {
+    if (paperScrollRef.current) {
+      paperScrollRef.current.scrollTo({
+        top: paperScrollRef.current.scrollHeight,
+        behavior: "smooth",
+      });
+    }
+  }
+
+  function handlePaperClick(e: React.MouseEvent<HTMLElement>) {
+    if (e.target === e.currentTarget && editorRef.current) {
+      editorRef.current.focus();
+      const selection = window.getSelection();
+      if (selection) {
+        const range = document.createRange();
+        range.selectNodeContents(editorRef.current);
+        range.collapse(false);
+        selection.removeAllRanges();
+        selection.addRange(range);
+      }
+    }
+  }
+
+  // 真实 AI 流式接口；正文与设定仅按用户勾选的范围发送。
+  async function runAiPreview(action: AiAction) {
+    if (!aiPrompt.trim()) {
+      setAiSourceKey(aiCurrentSourceKey);
+      setAiError("请先填写具体创作指令");
+      return;
+    }
+    const selection = window.getSelection();
+    const editor = editorRef.current;
+    const selectedText = editor && selection?.anchorNode && selection.focusNode
+      && editor.contains(selection.anchorNode) && editor.contains(selection.focusNode)
+      ? selection.toString().trim() : "";
+    const input: AiGenerationInput = {
+      action, instruction: aiPrompt, selectedText,
+      context: aiContextPayload, temperature: 0.7, maxTokens: 2000,
+    };
+    const preflight = planAiContext(input).budget;
+    if (preflight.selectedTextTooLong) {
+      setAiSourceKey(aiCurrentSourceKey);
+      setAiError("选中的文本超出本次输入预算，请缩短选区后重试");
+      return;
+    }
+    aiAbortRef.current?.abort();
+    const controller = new AbortController();
+    aiAbortRef.current = controller;
+    const runId = ++aiRunIdRef.current;
+    setIsGenerating(true);
+    setAiSourceKey(aiCurrentSourceKey);
+    setAiResult("");
+    setAiError(null);
+    setAiBudget(preflight);
+    setAiComplete(false);
+    setLastAiAction(action);
+    try {
+      await generateAiContentStream(input, {
+        signal: controller.signal,
+        onEvent: (event) => {
+          if (runId !== aiRunIdRef.current || controller.signal.aborted) return;
+          if (event.type === "start") setAiBudget(event.contextBudget);
+          if (event.type === "delta") setAiResult((current) => current + event.text);
+          if (event.type === "done") setAiComplete(true);
+        },
+      });
+    } catch (err: unknown) {
+      if (runId === aiRunIdRef.current && !controller.signal.aborted) {
+        setAiError(err instanceof Error ? err.message : "AI 服务请求失败");
+      }
+    } finally {
+      if (runId === aiRunIdRef.current) {
+        aiAbortRef.current = null;
+        setIsGenerating(false);
+      }
+    }
+  }
+
+  function stopAiPreview() {
+    aiRunIdRef.current += 1;
+    aiAbortRef.current?.abort();
+    aiAbortRef.current = null;
+    setIsGenerating(false);
+    setAiComplete(false);
+    setAiError("已停止生成；未完成的片段不会写入正文。");
+  }
+
+  useEffect(() => {
+    return () => {
+      aiAbortRef.current?.abort();
+    };
+  }, [activeWorkId, selectedId]);
 
   return (
     <main className="app-shell">
@@ -244,190 +2555,742 @@ export default function Home() {
           <div className="brand-mark" aria-hidden="true">墨</div>
           <div>
             <p className="brand-name">智能作者创作平台</p>
-            <button className="project-switcher" type="button">
-              长夜行 <ChevronDown size={14} />
-            </button>
+            <WorkSwitcher
+              works={works}
+              activeWorkId={activeWorkId}
+              onSelectWork={handleSelectWork}
+              onCreateWorkClick={() => setIsCreateWorkOpen(true)}
+              onArchiveWork={handleArchiveWork}
+            />
           </div>
         </div>
 
         <nav className="topnav" aria-label="工作区导航">
-          <button className="is-active" type="button">写作</button>
-          <button type="button">素材库</button>
-          <button type="button">统计</button>
+          <button
+            className={topNavTab === "writing" ? "is-active" : ""}
+            onClick={() => {
+              setTopNavTab("writing");
+              setActiveView("writing");
+            }}
+            type="button"
+          >
+            写作
+          </button>
+          <button
+            className={topNavTab === "materials" ? "is-active" : ""}
+            onClick={() => {
+              setTopNavTab("materials");
+              setActiveView("world");
+            }}
+            type="button"
+          >
+            素材库
+          </button>
+          <button
+            className={topNavTab === "stats" ? "is-active" : ""}
+            onClick={() => {
+              setTopNavTab("stats");
+              setActiveView("stats");
+            }}
+            type="button"
+          >
+            统计
+          </button>
         </nav>
 
         <div className="top-actions">
-          <span className="local-badge"><Check size={13} /> 已保存到本机</span>
-          <Dialog>
-            <DialogTrigger asChild>
-              <Button variant="ghost" size="icon" aria-label="AI 接口设置">
-                <Settings2 />
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="ai-settings-dialog">
-              <DialogHeader>
-                <DialogTitle>AI 接口设置</DialogTitle>
-                <DialogDescription>
-                  当前为本地演示。配置仅保存在这台设备上，正式接入时将由服务端加密转发，避免密钥暴露在浏览器中。
-                </DialogDescription>
-              </DialogHeader>
-              <label className="field-label">
-                API 地址
-                <input
-                  value={settings.endpoint}
-                  onChange={(event) => setSettings({ ...settings, endpoint: event.target.value })}
-                  placeholder="https://api.openai.com/v1"
-                />
-              </label>
-              <label className="field-label">
-                模型名称
-                <input
-                  value={settings.model}
-                  onChange={(event) => setSettings({ ...settings, model: event.target.value })}
-                  placeholder="deepseek-chat"
-                />
-              </label>
-              <label className="field-label">
-                API Key
-                <input
-                  type="password"
-                  value={settings.apiKey}
-                  onChange={(event) => setSettings({ ...settings, apiKey: event.target.value })}
-                  placeholder="sk-••••••••"
-                />
-              </label>
-              <DialogFooter>
-                <Button onClick={saveSettings}>保存到本机</Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+          <span className="local-badge">
+            {saveState === "saving" ? (
+              <>
+                <RefreshCw size={12} className="animate-spin mr-1" />
+                <span>正在保存…</span>
+              </>
+            ) : saveState === "conflict" ? (
+              <span className="text-amber-700 font-bold flex items-center gap-1">
+                <AlertTriangle size={12} /> 版本冲突
+              </span>
+            ) : saveState === "error" ? (
+              <span className="text-rose-700 font-bold flex items-center gap-1">
+                <AlertTriangle size={12} /> 保存失败
+              </span>
+            ) : (
+              <>
+                <Check size={13} className="mr-1 text-[#176b5b]" />
+                <span>已自动同步</span>
+              </>
+            )}
+          </span>
+          <TrashDialog
+            onRestored={async () => {
+              const ok = await flushPendingSave();
+              const hasPending = pendingSaveRef.current !== null;
+              const isSaving = activeSavePromiseRef.current !== null || saveStateRef.current === "saving";
+              const isConflict = saveStateRef.current === "conflict";
+              const switchCheck = canSwitchWork(hasPending, isSaving, isConflict);
+              if (!switchCheck.allowed || (!ok && hasPending)) {
+                alert("当前章节有未保存草稿、正在保存中或处于版本冲突状态，请先解决保存问题后再刷新工作区。");
+                return;
+              }
+              await loadWorkspaceData(activeWorkId || undefined);
+            }}
+          />
+          <ExportDialog
+            workId={currentWork?.id}
+            workTitle={currentWork?.title || "我的作品"}
+            chaptersCount={chapters.length}
+            totalWords={totalWords}
+          />
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="AI 接口设置"
+            onClick={() => setIsAiSettingsOpen(true)}
+            title="配置大模型服务与密钥"
+          >
+            <Settings2 />
+          </Button>
           <UserMenu />
         </div>
       </header>
 
-      <div className="workspace">
-        <aside className="tool-rail" aria-label="作品工具">
-          {projectNav.map(({ label, icon: Icon, active }) => (
-            <button key={label} className={active ? "rail-item is-active" : "rail-item"} type="button">
-              <Icon size={19} strokeWidth={1.8} />
-              <span>{label}</span>
-            </button>
-          ))}
-        </aside>
-
-        <aside className="chapter-panel">
-          <div className="panel-heading">
-            <div>
-              <p className="eyebrow">作品目录</p>
-              <h2>章节</h2>
-            </div>
-            <Button variant="ghost" size="icon-sm" aria-label="搜索章节"><Search /></Button>
-          </div>
-
-          <div className="chapter-scroll">
-            {groupedChapters.map((group, groupIndex) => (
-              <section className="volume" key={group.title}>
-                <button className="volume-title" type="button">
-                  <ChevronDown size={14} />
-                  <span>{group.title}</span>
-                  <span className="volume-count">{group.items.length}</span>
-                </button>
-                <div className="chapter-list">
-                  {group.items.map((chapter, chapterIndex) => {
-                    const number = groupIndex === 0 ? chapterIndex + 1 : chapterIndex + 4;
-                    return (
-                      <button
-                        key={chapter.id}
-                        className={chapter.id === selectedId ? "chapter-item is-active" : "chapter-item"}
-                        onClick={() => selectChapter(chapter.id)}
-                        type="button"
-                      >
-                        <span className="chapter-number">{String(number).padStart(2, "0")}</span>
-                        <span className="chapter-copy">
-                          <strong>{chapter.title.replace(/^第.+章\s*/, "")}</strong>
-                          <small>{plainText(chapter.content).length} 字 · {chapter.status === "done" ? "已完成" : "草稿"}</small>
-                        </span>
-                        {chapter.status === "done" && <Check className="chapter-check" size={14} />}
-                      </button>
-                    );
-                  })}
-                </div>
-              </section>
-            ))}
-          </div>
-
-          <button className="add-chapter" type="button" onClick={addChapter}>
-            <Plus size={16} /> 新建章节
+      <div className={`workspace ${activeView === "writing" ? "is-writing" : "is-full-view"}`}>
+        <aside className="tool-rail shrink-0" aria-label="作品工具">
+          <button
+            className={activeView === "writing" ? "rail-item is-active" : "rail-item"}
+            onClick={() => {
+              setActiveView("writing");
+              setTopNavTab("writing");
+            }}
+            type="button"
+          >
+            <BookOpen size={19} strokeWidth={1.8} />
+            <span>正文</span>
+          </button>
+          <button
+            className={activeView === "outline" ? "rail-item is-active" : "rail-item"}
+            onClick={() => {
+              setActiveView("outline");
+              setTopNavTab("writing");
+            }}
+            type="button"
+          >
+            <Archive size={19} strokeWidth={1.8} />
+            <span>大纲</span>
+          </button>
+          <button
+            className={activeView === "characters" ? "rail-item is-active" : "rail-item"}
+            onClick={() => {
+              setActiveView("characters");
+              setTopNavTab("writing");
+            }}
+            type="button"
+          >
+            <UsersRound size={19} strokeWidth={1.8} />
+            <span>角色</span>
+          </button>
+          <button
+            className={activeView === "world" ? "rail-item is-active" : "rail-item"}
+            onClick={() => {
+              setActiveView("world");
+              setTopNavTab("materials");
+            }}
+            type="button"
+          >
+            <Globe2 size={19} strokeWidth={1.8} />
+            <span>设定</span>
+          </button>
+          <button
+            className={activeView === "timeline" ? "rail-item is-active" : "rail-item"}
+            onClick={() => {
+              setActiveView("timeline");
+              setTopNavTab("writing");
+            }}
+            type="button"
+          >
+            <Clock3 size={19} strokeWidth={1.8} />
+            <span>时间线</span>
           </button>
         </aside>
 
-        <section className="editor-stage">
-          <div className="editor-toolbar" role="toolbar" aria-label="富文本工具栏">
-            <div className="toolbar-group">
-              <button type="button" aria-label="撤销" onClick={() => format("undo")}><Undo2 /></button>
-              <button type="button" aria-label="重做" onClick={() => format("redo")}><Redo2 /></button>
-            </div>
-            <span className="toolbar-divider" />
-            <div className="toolbar-group">
-              <button type="button" aria-label="二级标题" onClick={() => format("formatBlock", "h2")}><Heading2 /></button>
-              <button type="button" aria-label="加粗" onClick={() => format("bold")}><Bold /></button>
-              <button type="button" aria-label="斜体" onClick={() => format("italic")}><Italic /></button>
-              <button type="button" aria-label="引用" onClick={() => format("formatBlock", "blockquote")}><Quote /></button>
-              <button type="button" aria-label="列表" onClick={() => format("insertUnorderedList")}><List /></button>
-            </div>
-            <span className="toolbar-spacer" />
-            <Button variant="ghost" size="sm"><FileClock /> 版本</Button>
-            <Button variant="ghost" size="sm"><FileDown /> 导出</Button>
-            <Button variant="ghost" size="icon-sm" aria-label="更多选项"><MoreHorizontal /></Button>
-          </div>
-
-          <div className="paper-scroll">
-            <article className="writing-paper">
-              <div className="chapter-kicker">长夜行 · 卷一</div>
-              <input
-                className="chapter-title-input"
-                aria-label="章节标题"
-                value={selected.title}
-                onChange={(event) => {
-                  const next = chapters.map((chapter) =>
-                    chapter.id === selectedId ? { ...chapter, title: event.target.value } : chapter,
-                  );
-                  setChapters(next);
-                  setSaveState("saving");
-                  if (saveTimer.current) clearTimeout(saveTimer.current);
-                  saveTimer.current = setTimeout(() => {
-                    persist(next);
-                    setSaveState("saved");
-                  }, 650);
-                }}
-              />
-              <div className="chapter-meta">
-                <span>今天 18:42 更新</span>
-                <span>·</span>
-                <span>{chapterWords} 字</span>
+        {activeView === "writing" ? (
+          !currentWork ? (
+            <div className="flex-1 flex flex-col items-center justify-center p-12 text-center bg-[#fdfcf9] min-h-[65vh]">
+              <div className="w-20 h-20 rounded-3xl bg-[#edf5f2] border border-[#bad4cb] text-[#176b5b] flex items-center justify-center mb-6 shadow-sm">
+                <BookOpen className="w-10 h-10" />
               </div>
-              <div
-                ref={editorRef}
-                className="rich-editor"
-                contentEditable
-                suppressContentEditableWarning
-                onInput={handleEditorInput}
-                aria-label="章节正文编辑器"
-              />
-            </article>
-          </div>
+              <h2 className="font-serif text-2xl font-bold text-[#1f2a24] mb-2">
+                墨海初启 · 暂无长篇作品
+              </h2>
+              <p className="text-xs text-[#6e7b74] max-w-md mb-6 leading-relaxed">
+                执笔山海，落墨万卷。您可以创建属于您的第一部作品，开启专属长篇创作之旅。
+              </p>
+              <Button
+                onClick={() => setIsCreateWorkOpen(true)}
+                className="h-10 px-6 bg-[#176b5b] hover:bg-[#12584a] text-white font-serif text-sm rounded-xl shadow-md cursor-pointer flex items-center gap-2"
+              >
+                <Plus className="w-4 h-4" />
+                <span>新建第一部作品</span>
+              </Button>
+            </div>
+          ) : (
+            <>
+              <aside className="chapter-panel">
+                <div className="panel-heading">
+                  <div>
+                    <p className="eyebrow">作品目录</p>
+                    <h2>章节</h2>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={() => setIsCreateVolumeOpen(true)}
+                      title="新建分卷"
+                      aria-label="新建分卷"
+                    >
+                      <FolderPlus className="w-4 h-4 text-[#54625a]" />
+                    </Button>
+                    <Button variant="ghost" size="icon-sm" aria-label="搜索章节"><Search className="w-4 h-4 text-[#54625a]" /></Button>
+                  </div>
+                </div>
 
-          <footer className="editor-statusbar">
-            <span className={saveState === "saving" ? "save-status is-saving" : "save-status"}>
-              {saveState === "saving" ? "正在保存…" : <><Check size={13} /> 已自动保存</>}
-            </span>
-            <div className="status-spacer" />
-            <span>本章 {chapterWords} 字</span>
-            <span>全书 {totalWords.toLocaleString("zh-CN")} 字</span>
-          </footer>
-        </section>
+                {/* 关键 Q02：目录待同步/未知结果持久状态与显式重同步入口 */}
+                {needsCatalogResync && (
+                  <div className="mx-3 my-2 p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-xs text-[#523e1b] flex flex-col gap-1.5 animate-fadeIn">
+                    <div className="flex items-center gap-1.5 font-medium text-amber-800 dark:text-amber-300">
+                      <AlertTriangle className="w-4 h-4 shrink-0 text-amber-600" />
+                      <span>目录状态待确认</span>
+                    </div>
+                    <p className="text-[11px] text-[#786134] leading-relaxed">
+                      由于此前网络中断或操作异常，当前目录可能与服务端不同步。结构写入已锁定以保护草稿。
+                    </p>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={handleManualResyncCatalog}
+                      disabled={isResyncingCatalog}
+                      className="h-7 text-xs border-amber-400 hover:bg-amber-100 text-amber-900 cursor-pointer self-start mt-0.5"
+                    >
+                      <RotateCcw className={`w-3 h-3 mr-1 ${isResyncingCatalog ? "animate-spin" : ""}`} />
+                      {isResyncingCatalog ? "同步中..." : "重新同步目录"}
+                    </Button>
+                  </div>
+                )}
 
-        <aside className="inspector-panel">
+                <div className="chapter-scroll">
+                  {chapters.length === 0 && volumes.length === 0 ? (
+                    <div className="py-12 px-4 text-center text-xs text-[#828f87] space-y-2">
+                      <p>作品暂无正文章节</p>
+                      <p className="text-[11px] text-[#9baa9f]">点击下方按钮开启新篇章或新建分卷</p>
+                    </div>
+                  ) : (
+                    groupedChapters.map((group) => {
+                      const isCollapsed = collapsedVolumeIds.has(group.id);
+                      return (
+                        <section className="volume" key={group.id}>
+                          <div className="volume-header">
+                            <button
+                              className="volume-title"
+                              type="button"
+                              onClick={() => toggleVolumeCollapse(group.id)}
+                              title={isCollapsed ? "点击展开分卷" : "点击折叠分卷"}
+                              aria-expanded={!isCollapsed}
+                            >
+                              {isCollapsed ? (
+                                <ChevronRight size={14} className="text-[#88928b] shrink-0" />
+                              ) : (
+                                <ChevronDown size={14} className="text-[#88928b] shrink-0" />
+                              )}
+                              <span>{group.title}</span>
+                              <span className="volume-count">{group.items.length} 章</span>
+                            </button>
+                            <div className="flex items-center gap-0.5">
+                              {group.id !== "default" && group.id !== "unassigned" && (
+                                <>
+                                  <button
+                                    type="button"
+                                    className="volume-action-btn disabled:opacity-30 disabled:cursor-not-allowed"
+                                    disabled={volumes.findIndex((v) => v.id === group.id) <= 0}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleMoveVolume(group.id, "up");
+                                    }}
+                                    title="上移分卷"
+                                    aria-label={`上移分卷《${group.title}》`}
+                                  >
+                                    <ArrowUp size={13} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="volume-action-btn disabled:opacity-30 disabled:cursor-not-allowed"
+                                    disabled={
+                                      volumes.findIndex((v) => v.id === group.id) === -1 ||
+                                      volumes.findIndex((v) => v.id === group.id) >= volumes.length - 1
+                                    }
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleMoveVolume(group.id, "down");
+                                    }}
+                                    title="下移分卷"
+                                    aria-label={`下移分卷《${group.title}》`}
+                                  >
+                                    <ArrowDown size={13} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="volume-action-btn hover:text-rose-600"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleDeleteVolume(group.id, group.title);
+                                    }}
+                                    title={`删除分卷《${group.title}》（章节将转入【未分卷】）`}
+                                    aria-label={`删除分卷《${group.title}》`}
+                                  >
+                                    <Trash2 size={13} />
+                                  </button>
+                                </>
+                              )}
+                              <button
+                                type="button"
+                                className="volume-action-btn"
+                                disabled={isCreatingChapter || needsCatalogResync}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  addChapter(group.id === "default" || group.id === "unassigned" ? undefined : group.id);
+                                }}
+                                title={
+                                  group.id === "unassigned"
+                                    ? "新建未分卷章节"
+                                    : `在《${group.title}》内新建章节`
+                                }
+                                aria-label="在此卷新建章节"
+                              >
+                                <Plus size={13} />
+                              </button>
+                            </div>
+                          </div>
+
+                          {!isCollapsed && (
+                            <div className="chapter-list">
+                              {group.items.length === 0 ? (
+                                <div className="px-3 py-2.5 my-1 text-center bg-[#fbfcfb] rounded-lg border border-dashed border-[#d8e0db]">
+                                  <p className="text-[11px] text-[#86928b] mb-1.5">
+                                    {group.id === "unassigned" ? "暂无未分卷章节" : "本卷暂无章节"}
+                                  </p>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={isCreatingChapter || needsCatalogResync}
+                                    className="h-7 text-[12px] px-2.5 text-[#176b5b] border-[#bed4ca] hover:bg-[#edf5f1]"
+                                    onClick={() => addChapter(group.id === "default" || group.id === "unassigned" ? undefined : group.id)}
+                                  >
+                                    <Plus size={12} className="mr-1" /> 在此新建章节
+                                  </Button>
+                                </div>
+                              ) : (
+                                group.items.map((chapter, groupIndex) => {
+                                  const number = chapters.findIndex((c) => c.id === chapter.id) + 1;
+                                  const isDone = chapter.status === "completed" || chapter.status === "done";
+                                  const isFirstInGroup = groupIndex === 0;
+                                  const isLastInGroup = groupIndex === group.items.length - 1;
+                                  const currentChapterVolId = chapter.volumeId || null;
+
+                                  // 可移入的目标分卷列表（排除自身所在卷）
+                                  const availableDestinations: { id: string | null; title: string }[] = [];
+                                  if (currentChapterVolId !== null) {
+                                    availableDestinations.push({ id: null, title: "【未分卷】" });
+                                  }
+                                  volumes.forEach((v) => {
+                                    if (v.id !== currentChapterVolId) {
+                                      availableDestinations.push({ id: v.id, title: `《${v.title}》` });
+                                    }
+                                  });
+
+                                  return (
+                                    <div key={chapter.id} className="relative group/chap">
+                                      <button
+                                        className={chapter.id === selectedId ? "chapter-item is-active pr-12" : "chapter-item pr-12"}
+                                        onClick={() => selectChapter(chapter.id)}
+                                        type="button"
+                                      >
+                                        <span className="chapter-number">{String(number).padStart(2, "0")}</span>
+                                        <span className="chapter-copy">
+                                          <strong>{chapter.title.replace(/^第.+章\s*/, "")}</strong>
+                                          <small>{getChapterWordCount(chapter)} 字 · {isDone ? "已完成" : "草稿"}</small>
+                                        </span>
+                                        {isDone && <Check className="chapter-check" size={14} />}
+                                      </button>
+
+                                      {/* 章节操作下拉菜单（C01：上移、下移、移动到卷、移入回收站） */}
+                                      <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center opacity-0 group-hover/chap:opacity-100 focus-within:opacity-100 transition-opacity z-10">
+                                        <DropdownMenu>
+                                          <DropdownMenuTrigger asChild>
+                                            <button
+                                              type="button"
+                                              onClick={(e) => e.stopPropagation()}
+                                              className="p-1 rounded text-[#808d85] hover:text-[#202923] hover:bg-[#edf5f2] cursor-pointer transition-colors"
+                                              title="章节操作"
+                                              aria-label={`章节《${chapter.title}》操作菜单`}
+                                            >
+                                              <MoreHorizontal size={14} />
+                                            </button>
+                                          </DropdownMenuTrigger>
+                                          <DropdownMenuContent align="end" className="w-44 bg-white border border-[#dedcd4] shadow-lg rounded-xl p-1 text-sm z-50">
+                                            <DropdownMenuItem
+                                              disabled={isFirstInGroup}
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleMoveChapter(chapter.id, "up");
+                                              }}
+                                              className="cursor-pointer text-sm"
+                                            >
+                                              <ArrowUp size={14} className="mr-2 text-[#56615b]" />
+                                              <span>上移章节</span>
+                                            </DropdownMenuItem>
+                                            <DropdownMenuItem
+                                              disabled={isLastInGroup}
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleMoveChapter(chapter.id, "down");
+                                              }}
+                                              className="cursor-pointer text-sm"
+                                            >
+                                              <ArrowDown size={14} className="mr-2 text-[#56615b]" />
+                                              <span>下移章节</span>
+                                            </DropdownMenuItem>
+
+                                            <DropdownMenuSub>
+                                              <DropdownMenuSubTrigger className="cursor-pointer text-sm">
+                                                <FolderPlus size={14} className="mr-2 text-[#56615b]" />
+                                                <span>移动到…</span>
+                                              </DropdownMenuSubTrigger>
+                                              <DropdownMenuSubContent className="w-48 bg-white border border-[#dedcd4] shadow-lg rounded-xl p-1 text-sm z-50">
+                                                {availableDestinations.length === 0 ? (
+                                                  <DropdownMenuItem disabled className="text-xs text-[#8d9892]">
+                                                    暂无可移动目标卷
+                                                  </DropdownMenuItem>
+                                                ) : (
+                                                  availableDestinations.map((dest) => (
+                                                    <DropdownMenuItem
+                                                      key={dest.id || "unassigned"}
+                                                      onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        handleMoveChapterToVolume(chapter.id, dest.id);
+                                                      }}
+                                                      className="cursor-pointer text-sm"
+                                                    >
+                                                      <span className="truncate">{dest.title}</span>
+                                                    </DropdownMenuItem>
+                                                  ))
+                                                )}
+                                              </DropdownMenuSubContent>
+                                            </DropdownMenuSub>
+
+                                            <DropdownMenuSeparator className="my-1 bg-[#eeece6]" />
+
+                                            <DropdownMenuItem
+                                              onClick={(e) => handleSoftDeleteChapter(chapter.id, e as any)}
+                                              className="cursor-pointer text-sm text-rose-600 focus:text-rose-700 focus:bg-rose-50"
+                                            >
+                                              <Trash2 size={14} className="mr-2" />
+                                              <span>移入回收站</span>
+                                            </DropdownMenuItem>
+                                          </DropdownMenuContent>
+                                        </DropdownMenu>
+                                      </div>
+                                    </div>
+                                  );
+                                })
+                              )}
+                            </div>
+                          )}
+                        </section>
+                      );
+                    })
+                  )}
+                </div>
+
+                <div className="sidebar-footer">
+                  <button
+                    className="add-chapter"
+                    type="button"
+                    disabled={isCreatingChapter || needsCatalogResync}
+                    onClick={() => addChapter()}
+                  >
+                    <Plus size={15} /> {isCreatingChapter ? "创建中..." : "新建章节"}
+                  </button>
+                  <button
+                    className="add-volume-btn"
+                    type="button"
+                    onClick={() => setIsCreateVolumeOpen(true)}
+                    title="新建作品分卷"
+                  >
+                    <FolderPlus size={14} className="text-[#176b5b]" />
+                    <span>新建卷</span>
+                  </button>
+                </div>
+              </aside>
+
+              <section className="editor-stage">
+                {chapters.length === 0 ? (
+                  <div className="flex-1 flex flex-col items-center justify-center p-8 text-center min-h-[400px]">
+                    <div className="w-14 h-14 rounded-2xl bg-[#edf5f2] border border-[#c4ded4] text-[#176b5b] flex items-center justify-center mb-4 shadow-2xs">
+                      <FilePlus2 className="w-7 h-7" />
+                    </div>
+                    <h3 className="font-serif text-lg font-bold text-[#202b25] mb-1.5">
+                      《{currentWork.title}》尚未创建章节
+                    </h3>
+                    <p className="text-xs text-[#717e76] mb-5 max-w-sm">
+                      作品已设立，点击下方新建章节即可开始落笔，并享受实时乐观锁并发安全保障。
+                    </p>
+                    <Button
+                      disabled={isCreatingChapter || needsCatalogResync}
+                      onClick={() => addChapter()}
+                      className="h-9 px-5 bg-[#176b5b] hover:bg-[#12584a] text-white text-xs rounded-xl shadow-sm cursor-pointer flex items-center gap-1.5"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>{isCreatingChapter ? "创建中..." : "新建第一章"}</span>
+                    </Button>
+                  </div>
+                ) : (
+                  <>
+                    <div className="editor-toolbar" role="toolbar" aria-label="富文本工具栏">
+                      <div className="toolbar-group">
+                        <button type="button" aria-label="撤销" onClick={() => format("undo")}><Undo2 /></button>
+                        <button type="button" aria-label="重做" onClick={() => format("redo")}><Redo2 /></button>
+                      </div>
+                      <span className="toolbar-divider" />
+                      <div className="toolbar-group">
+                        <button type="button" aria-label="二级标题" onClick={() => toggleHeading("h2")}><Heading2 /></button>
+                        <button type="button" aria-label="加粗" onClick={() => format("bold")}><Bold /></button>
+                        <button type="button" aria-label="斜体" onClick={() => format("italic")}><Italic /></button>
+                        <button type="button" aria-label="引用" onClick={toggleBlockquote}><Quote /></button>
+                        <button type="button" aria-label="列表" onClick={() => format("insertUnorderedList")}><List /></button>
+                      </div>
+                      <VersionHistoryDialog
+                        chapterId={selected.id}
+                        chapterTitle={selected.title}
+                        currentRevision={selected.revision}
+                        onBeforeOpen={flushPendingSave}
+                        onRestored={handleVersionRestored}
+                        trigger={<Button variant="ghost" size="sm"><FileClock /> 版本</Button>}
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setIsChapterLinksOpen(true)}
+                        title="查看与管理本章关联设定"
+                      >
+                        <Link2 className="w-3.5 h-3.5 mr-1" />
+                        <span>关联{chapterLinks.length > 0 ? ` (${chapterLinks.length})` : ""}</span>
+                      </Button>
+                      <ExportDialog
+                        workId={currentWork?.id}
+                        workTitle={currentWork?.title || "我的作品"}
+                        chaptersCount={chapters.length}
+                        totalWords={totalWords}
+                        trigger={<Button variant="ghost" size="sm"><FileDown /> 导出</Button>}
+                      />
+                      <div className="ml-auto flex items-center gap-1">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          onClick={() => setIsInspectorCollapsed((prev) => !prev)}
+                          title={isInspectorCollapsed ? "展开右侧面板" : "折叠右侧面板"}
+                          aria-label={isInspectorCollapsed ? "展开右侧面板" : "折叠右侧面板"}
+                          aria-expanded={!isInspectorCollapsed}
+                        >
+                          {isInspectorCollapsed ? (
+                            <PanelRightOpen className="w-4 h-4 text-[#54625a]" />
+                          ) : (
+                            <PanelRightClose className="w-4 h-4 text-[#54625a]" />
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+
+                    {/* 冲突提示 Banner */}
+                    {saveState === "conflict" && conflictChapterId === selectedId && (
+                      <div className="mx-6 mt-4 p-4 rounded-2xl bg-[#fff8f0] border-2 border-amber-500/40 shadow-md text-xs text-[#523e1b] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 animate-fadeIn">
+                        <div className="flex items-start gap-2.5">
+                          <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                          <div>
+                            <h4 className="font-serif font-bold text-sm text-[#3b2b10] flex items-center gap-1.5">
+                              <span>
+                                {selected?.title.includes("【已在服务端删除】")
+                                  ? "本章已在服务端被删除（草稿已安全保留）"
+                                  : "版本冲突：本章已在其他窗口或设备更新"}
+                              </span>
+                              <span className="font-mono text-[10px] px-1.5 py-0.2 rounded bg-amber-100 text-amber-800">
+                                {selected?.title.includes("【已在服务端删除】") ? "DELETED" : "HTTP 409"}
+                              </span>
+                            </h4>
+                            <p className="text-[11px] text-[#786134] mt-0.5">
+                              {selected?.title.includes("【已在服务端删除】")
+                                ? "本地未保存草稿已完整保留在编辑器中，已阻止保存以防丢稿。您可以复制草稿文本，或将其恢复为新章节继续创作。"
+                                : "本地草稿已完整保留在编辑器中，系统已停止自动重试。请选择拉取服务端最新版本，或以此草稿强制覆盖。"}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={handleCopyDraft}
+                            className="h-8 text-xs border-amber-300 hover:bg-amber-50 text-amber-900 cursor-pointer"
+                          >
+                            <Copy className="w-3.5 h-3.5 mr-1" />
+                            复制草稿
+                          </Button>
+                          {selected?.title.includes("【已在服务端删除】") ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              onClick={handleRestoreAsNewChapter}
+                              className="h-8 text-xs bg-amber-700 hover:bg-amber-800 text-white cursor-pointer"
+                            >
+                              <RotateCcw className="w-3.5 h-3.5 mr-1" />
+                              恢复为新章节
+                            </Button>
+                          ) : (
+                            <>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={handlePullServerVersion}
+                                className="h-8 text-xs border-amber-300 hover:bg-amber-50 text-amber-900 cursor-pointer"
+                              >
+                                <RotateCcw className="w-3.5 h-3.5 mr-1" />
+                                拉取服务端版本
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                onClick={handleForceOverwrite}
+                                className="h-8 text-xs bg-amber-700 hover:bg-amber-800 text-white cursor-pointer"
+                              >
+                                强制覆盖保存
+                              </Button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    <div
+                      ref={paperScrollRef}
+                      onScroll={handlePaperScroll}
+                      className="paper-scroll"
+                    >
+                      <article className="writing-paper" onClick={handlePaperClick}>
+                        <div className="chapter-kicker">
+                          {currentWork ? currentWork.title : "长篇创作"} · {currentVolume ? currentVolume.title : "第一卷"}
+                        </div>
+                        <input
+                          className="chapter-title-input"
+                          aria-label="章节标题"
+                          value={selected.title}
+                          onChange={(event) => handleTitleChange(event.target.value)}
+                        />
+                        <div className="chapter-meta">
+                          <span>版本 v{selected.revision ?? 1}</span>
+                          <span>·</span>
+                          <span>{chapterWords} 字</span>
+                        </div>
+                        <div
+                          ref={editorRef}
+                          className="rich-editor"
+                          contentEditable
+                          suppressContentEditableWarning
+                          onInput={handleEditorInput}
+                          aria-label="章节正文编辑器"
+                        />
+                      </article>
+                    </div>
+
+                    <div className="paper-scroll-controls" aria-label="快捷滚动控制">
+                      <button
+                        type="button"
+                        className="scroll-btn"
+                        onClick={scrollToTop}
+                        title="回到顶部"
+                        aria-label="回到顶部"
+                      >
+                        <ChevronUp size={16} />
+                      </button>
+                      <div className="scroll-indicator" title={`当前滚动进度 ${scrollProgress}%`}>
+                        {scrollProgress}%
+                      </div>
+                      <button
+                        type="button"
+                        className="scroll-btn"
+                        onClick={scrollToBottom}
+                        title="滚到底部"
+                        aria-label="滚到底部"
+                      >
+                        <ChevronDown size={16} />
+                      </button>
+                    </div>
+
+                    <footer className="editor-statusbar">
+                      <span
+                        className={
+                          saveState === "saving"
+                            ? "save-status is-saving"
+                            : saveState === "conflict"
+                            ? "save-status is-conflict text-amber-700 font-bold"
+                            : saveState === "error"
+                            ? "save-status is-error text-rose-700 font-bold"
+                            : "save-status"
+                        }
+                      >
+                        {saveState === "saving" ? (
+                          <>
+                            <RefreshCw size={12} className="animate-spin mr-1" />
+                            <span>正在保存…</span>
+                          </>
+                        ) : saveState === "conflict" ? (
+                          <>
+                            <AlertTriangle size={12} className="mr-1 text-amber-600" />
+                            <span>版本冲突 (409)</span>
+                          </>
+                        ) : saveState === "error" ? (
+                          <div className="flex items-center gap-1.5 text-rose-700">
+                            <AlertTriangle size={12} className="shrink-0" />
+                            <span>保存失败（草稿已保留）</span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                performSave();
+                              }}
+                              className="px-1.5 py-0.5 rounded bg-rose-100 hover:bg-rose-200 text-rose-800 text-[11px] font-medium underline cursor-pointer"
+                            >
+                              重试保存
+                            </button>
+                          </div>
+                        ) : (
+                          <>
+                            <Check size={13} className="mr-1 text-[#176b5b]" />
+                            <span>已自动保存（v{selected.revision ?? 1}）</span>
+                          </>
+                        )}
+                      </span>
+                      <div className="status-spacer" />
+                      <span>本章 {chapterWords} 字</span>
+                      <span>全书 {totalWords.toLocaleString("zh-CN")} 字</span>
+                    </footer>
+                  </>
+                )}
+              </section>
+
+        <aside className={`inspector-panel ${isInspectorCollapsed ? "is-collapsed" : ""}`}>
           <Tabs value={rightTab} onValueChange={setRightTab} className="inspector-tabs">
             <TabsList variant="line" className="inspector-tab-list">
               <TabsTrigger value="ai"><Bot /> AI 助手</TabsTrigger>
@@ -437,25 +3300,105 @@ export default function Home() {
             <TabsContent value="ai" className="inspector-content">
               <div className="ai-identity">
                 <div className="ai-orb"><Sparkles size={18} /></div>
-                <div>
-                  <strong>灵感助手</strong>
-                  <p>仅使用当前章节与手动输入的要求</p>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <strong>灵感创作助手</strong>
+                    <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-100/90 text-emerald-800 font-mono">
+                      加密代理
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-[#6b7770]">由真实大模型生成，仅进入预览区</p>
                 </div>
-                <span className="preview-pill">预览</span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setIsAiSettingsOpen(true)}
+                  className="h-7 px-2 text-xs text-[#176b5b] hover:bg-[#edf5f2] cursor-pointer shrink-0"
+                  title="配置大模型服务与密钥"
+                >
+                  <Settings2 size={13} className="mr-1" />
+                  配置
+                </Button>
               </div>
 
-              <div className="context-card">
-                <div className="context-card-title">
-                  <span>本次参考范围</span>
-                  <button type="button">调整</button>
+              {/* 上下文参考范围（用户可勾选控制） */}
+              <div className="p-3 rounded-2xl bg-[#faf9f5] border border-[#e4e2da] space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-serif font-bold text-[#202b25] flex items-center gap-1">
+                    <BookOpen size={13} className="text-[#176b5b]" />
+                    <span>选择参考上下文</span>
+                  </span>
+                  <span className="text-[10px] font-mono text-[#78847d] bg-[#f0eee6] px-1.5 py-0.5 rounded">
+                    输入约 {aiPreviewBudget.estimatedInputTokens}/{aiPreviewBudget.inputTokenLimit} Tokens
+                  </span>
                 </div>
-                <div className="context-token"><BookOpen size={14} /> 当前章节：{selected.title}</div>
-                <div className="context-token"><Archive size={14} /> 卷一大纲</div>
+                <p className="text-[11px] leading-relaxed text-[#69766e]">
+                  仅发送勾选的材料；Token 为保守估算，实际用量以模型返回为准。
+                </p>
+                {aiPreviewBudget.omittedCharacters > 0 && (
+                  <p role="status" className="text-[11px] leading-relaxed text-amber-700">
+                    预计省略约 {aiPreviewBudget.omittedCharacters} 字；章节保留末尾，其他设定保留开头。
+                  </p>
+                )}
+
+                <div className="grid grid-cols-2 gap-1.5 text-xs text-[#39463f] pt-0.5">
+                  <label className="flex items-center gap-1.5 cursor-pointer hover:text-[#176b5b]">
+                    <input
+                      type="checkbox"
+                      checked={includeCurrentChapter}
+                      onChange={(e) => setIncludeCurrentChapter(e.target.checked)}
+                      className="rounded accent-[#176b5b]"
+                    />
+                    <span className="truncate">当前正文（末尾 3000 字）</span>
+                  </label>
+                  <label className="flex items-center gap-1.5 cursor-pointer hover:text-[#176b5b]">
+                    <input
+                      type="checkbox"
+                      checked={includeOutline}
+                      onChange={(e) => setIncludeOutline(e.target.checked)}
+                      className="rounded accent-[#176b5b]"
+                    />
+                    <span className="truncate">卷章大纲（前 2 项）</span>
+                  </label>
+                  <label className="flex items-center gap-1.5 cursor-pointer hover:text-[#176b5b]">
+                    <input
+                      type="checkbox"
+                      checked={includeCharacters}
+                      onChange={(e) => setIncludeCharacters(e.target.checked)}
+                      className="rounded accent-[#176b5b]"
+                    />
+                    <span className="truncate">核心角色（前 3 项）</span>
+                  </label>
+                  <label className="flex items-center gap-1.5 cursor-pointer hover:text-[#176b5b]">
+                    <input
+                      type="checkbox"
+                      checked={includeWorld}
+                      onChange={(e) => setIncludeWorld(e.target.checked)}
+                      className="rounded accent-[#176b5b]"
+                    />
+                    <span className="truncate">世界观设定（前 2 项）</span>
+                  </label>
+                  <label className="flex items-center gap-1.5 cursor-pointer hover:text-[#176b5b] col-span-2">
+                    <input
+                      type="checkbox"
+                      checked={includeTimeline}
+                      onChange={(e) => setIncludeTimeline(e.target.checked)}
+                      className="rounded accent-[#176b5b]"
+                    />
+                    <span className="truncate">历史时间线（前 2 项）</span>
+                  </label>
+                </div>
               </div>
 
               <div className="quick-actions">
                 {aiActions.map(({ id, label, icon: Icon }) => (
-                  <button key={id} type="button" onClick={() => runAiPreview(id)}>
+                  <button
+                    key={id}
+                    type="button"
+                    disabled={isAiGeneratingHere}
+                    onClick={() => runAiPreview(id as AiAction)}
+                    className="cursor-pointer"
+                  >
                     <Icon size={16} />
                     <span>{label}</span>
                     <ChevronRight size={15} />
@@ -464,78 +3407,579 @@ export default function Home() {
               </div>
 
               <label className="prompt-box">
-                <span>告诉 AI 你想要什么</span>
-                <textarea value={aiPrompt} onChange={(event) => setAiPrompt(event.target.value)} />
-                <div>
-                  <span>{aiPrompt.length}/300</span>
-                  <Button size="sm" onClick={() => runAiPreview("continue")} disabled={isGenerating}>
-                    <Sparkles /> {isGenerating ? "构思中…" : "生成建议"}
+                <span className="text-xs font-serif font-bold text-[#202b25]">向 AI 提出具体创作指令</span>
+                <textarea
+                  value={aiPrompt}
+                  onChange={(event) => setAiPrompt(event.target.value)}
+                  maxLength={2000}
+                  placeholder="例如：着重描写夜晚暴雨敲打古旧窗棂的萧瑟氛围，突出主角沈砚眉宇间的沧桑……"
+                  rows={3}
+                />
+                <div className="flex items-center justify-between pt-1">
+                  <span className="text-[11px] text-[#86918a] font-mono">{aiPrompt.length}/2000</span>
+                  <Button
+                    size="sm"
+                    onClick={() => runAiPreview("continue")}
+                    disabled={isAiGeneratingHere}
+                    className="h-8 px-3 bg-[#176b5b] hover:bg-[#12594b] text-white text-xs cursor-pointer rounded-lg shadow-xs"
+                  >
+                    {isAiGeneratingHere ? (
+                      <>
+                        <RefreshCw size={13} className="animate-spin mr-1" />
+                        <span>模型构思中…</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles size={13} className="mr-1" />
+                        <span>生成建议</span>
+                      </>
+                    )}
                   </Button>
                 </div>
               </label>
 
-              {aiResult && (
-                <div className="ai-result">
-                  <div className="ai-result-heading"><Sparkles size={15} /> 建议片段</div>
-                  <p>{aiResult}</p>
-                  <div className="ai-result-actions">
-                    <button type="button" onClick={() => setAiResult("")}>舍弃</button>
-                    <button
-                      type="button"
+              {isAiGeneratingHere && (
+                <button
+                  type="button"
+                  onClick={stopAiPreview}
+                  className="w-full rounded-lg border border-rose-200 px-3 py-2 text-xs text-rose-700 hover:bg-rose-50 cursor-pointer"
+                >
+                  停止生成
+                </button>
+              )}
+              {aiSourceKey === aiCurrentSourceKey && aiError && <p role="alert" className="text-xs text-rose-700 leading-relaxed">{aiError}</p>}
+              {aiSourceKey === aiCurrentSourceKey && aiBudget && aiBudget.omittedCharacters > 0 && (
+                <p role="status" className="text-xs text-amber-700 leading-relaxed">
+                  本次已按预算省略约 {aiBudget.omittedCharacters} 字，生成建议仅依据实际发送的片段。
+                </p>
+              )}
+
+              {aiSourceKey === aiCurrentSourceKey && aiResult && (
+                <div className="p-3.5 rounded-2xl bg-[#fbfaf6] border border-[#d6d4c9] shadow-sm space-y-2.5 animate-fadeIn text-xs">
+                  <div className="flex items-center justify-between text-[#1f2b25]">
+                    <div className="flex items-center gap-1.5 font-serif font-bold text-xs">
+                      <Sparkles size={14} className="text-[#176b5b]" />
+                      <span>AI 建议片段（{isAiGeneratingHere ? "生成中" : aiComplete ? "预览" : "未完成"}）</span>
+                    </div>
+                    {copiedToast && (
+                      <span className="text-[10px] text-emerald-800 bg-emerald-100 px-1.5 py-0.2 rounded font-mono">
+                        已复制
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="p-3 rounded-xl bg-white/95 border border-[#e6e4dc] font-serif text-[#2a3630] leading-relaxed max-h-64 overflow-y-auto whitespace-pre-wrap selection:bg-[#bad4cb]">
+                    {aiResult}
+                  </div>
+
+                  <div className="flex items-center justify-between pt-1">
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText(aiResult);
+                          setCopiedToast(true);
+                          setTimeout(() => setCopiedToast(false), 2000);
+                        }}
+                        className="px-2 py-1 rounded-md text-[11px] text-[#55635b] hover:bg-[#eae8e0] cursor-pointer flex items-center gap-1 transition-colors"
+                        title="复制建议文本"
+                      >
+                        <Copy size={12} />
+                        <span>复制</span>
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isAiGeneratingHere}
+                        onClick={() => runAiPreview(lastAiAction)}
+                        className="px-2 py-1 rounded-md text-[11px] text-[#176b5b] hover:bg-[#edf5f2] cursor-pointer flex items-center gap-1 transition-colors"
+                        title="按相同指令再次构思"
+                      >
+                        <RefreshCw size={12} className={isAiGeneratingHere ? "animate-spin" : ""} />
+                        <span>重试</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAiResult("")}
+                        className="px-2 py-1 rounded-md text-[11px] text-[#86918a] hover:text-rose-600 hover:bg-rose-50 cursor-pointer transition-colors"
+                      >
+                        舍弃
+                      </button>
+                    </div>
+
+                    <Button
+                      size="sm"
+                      disabled={!aiComplete || isAiGeneratingHere}
                       onClick={() => {
                         if (!editorRef.current) return;
-                        editorRef.current.innerHTML += `<p>${aiResult}</p>`;
+                        // 模型输出视作纯文本，禁止作为 HTML 注入编辑器。
+                        for (const paragraph of aiResult.split(/\n\n+/).filter(Boolean)) {
+                          const node = document.createElement("p");
+                          paragraph.split("\n").forEach((line, index) => {
+                            if (index) node.appendChild(document.createElement("br"));
+                            node.appendChild(document.createTextNode(line));
+                          });
+                          editorRef.current.appendChild(node);
+                        }
                         handleEditorInput();
                         setAiResult("");
+                        setAiComplete(false);
                       }}
+                      className="h-7 px-3 bg-[#176b5b] hover:bg-[#12594b] text-white text-xs font-medium rounded-lg cursor-pointer shadow-xs"
                     >
-                      插入正文
-                    </button>
+                      <Check size={12} className="mr-1" />
+                      <span>采纳并写入</span>
+                    </Button>
                   </div>
                 </div>
               )}
 
               <div className="goal-card">
                 <div className="goal-heading">
-                  <div><Target size={16} /><span>今日目标</span></div>
-                  <strong>{chapterWords} / {goal}</strong>
+                  <div>
+                    <Target size={15} className={isGoalReached ? "text-emerald-600 animate-pulse" : "text-[#176b5b]"} />
+                    <span className="font-semibold">今日总目标</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <strong>
+                      {isUnlimitedDaily
+                        ? `${serverTodayWords} 字 (不设限)`
+                        : hasDailyTarget
+                        ? `${serverTodayWords} / ${serverDailyGoal} 字`
+                        : `${serverTodayWords} 字 (未设目标)`}
+                    </strong>
+                    <Dialog open={isGoalDialogOpen} onOpenChange={setIsGoalDialogOpen}>
+                      <DialogTrigger asChild>
+                        <button
+                          type="button"
+                          className="text-caption text-[#176b5b] hover:underline flex items-center gap-0.5 cursor-pointer ml-1"
+                          title="调整每日码字目标"
+                        >
+                          <Settings2 size={12} />
+                          <span>设置</span>
+                        </button>
+                      </DialogTrigger>
+                      <DialogContent className="sm:max-w-md bg-[#fffefb] border-[#dedcd4]">
+                        <DialogHeader>
+                          <DialogTitle className="font-serif text-lg text-[#202923] flex items-center gap-2">
+                            <Target className="w-5 h-5 text-[#176b5b]" />
+                            <span>设定全书每日码字总目标</span>
+                          </DialogTitle>
+                          <DialogDescription className="text-xs text-[#717b75]">
+                            面向全书所有章节的每日总产出规划，量力而行，达成即获奖励欢呼。
+                          </DialogDescription>
+                        </DialogHeader>
+
+                        <div className="space-y-4 py-2">
+                          <div className="space-y-1.5">
+                            <span className="text-xs text-[#526058] font-medium">快捷预设：</span>
+                            <div className="grid grid-cols-3 gap-2">
+                              {[
+                                { words: 1000, label: "轻松练笔" },
+                                { words: 2000, label: "稳健日更" },
+                                { words: 3000, label: "黄金篇幅" },
+                                { words: 5000, label: "爆发冲刺" },
+                                { words: 10000, label: "万字长卷" },
+                              ].map((preset) => (
+                                <button
+                                  key={preset.words}
+                                  type="button"
+                                  onClick={() => {
+                                    updateDailyGoal(preset.words);
+                                    setIsGoalDialogOpen(false);
+                                  }}
+                                  className={`p-2 rounded-xl text-left border transition-all text-xs cursor-pointer ${
+                                    serverDailyGoal === preset.words
+                                      ? "bg-[#edf5f2] border-[#176b5b] text-[#176b5b] font-bold shadow-xs"
+                                      : "bg-white border-[#dedcd4] text-[#4d5a53] hover:border-[#176b5b]"
+                                  }`}
+                                >
+                                  <div className="font-mono font-bold text-sm">{preset.words} 字</div>
+                                  <div className="text-xs text-[#828c86]">{preset.label}</div>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="space-y-1.5 pt-2 border-t border-[#eeece6]">
+                            <span className="text-xs text-[#526058] font-medium">自定义每日目标：</span>
+                            <div className="flex gap-2">
+                              <input
+                                type="number"
+                                min="0"
+                                max="100000"
+                                step="100"
+                                value={goalInputValue}
+                                onChange={(e) => setGoalInputValue(e.target.value)}
+                                className="flex-1 h-9 px-3 text-xs font-mono rounded-lg border border-[#dedcd4] bg-white focus:outline-none focus:border-[#176b5b]"
+                                placeholder="输入目标字数（0 为不设限）"
+                              />
+                              <Button
+                                size="sm"
+                                onClick={() => {
+                                  const parsed = parseInt(goalInputValue, 10);
+                                  if (!isNaN(parsed) && parsed >= 0) {
+                                    updateDailyGoal(parsed);
+                                    setIsGoalDialogOpen(false);
+                                  }
+                                }}
+                                className="h-9 px-4 text-xs bg-[#176b5b] hover:bg-[#12584a] text-white cursor-pointer"
+                              >
+                                确认保存
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+
+                        <DialogFooter className="flex items-center justify-between sm:justify-between pt-2">
+                          <div className="flex items-center gap-2">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                setIsGoalDialogOpen(false);
+                                setTimeout(() => {
+                                  setShowCheerModal(true);
+                                }, 100);
+                              }}
+                              className="text-xs text-[#176b5b] border-[#bad4cb] hover:bg-[#edf5f2] cursor-pointer"
+                            >
+                              🎉 预览达标欢呼动效
+                            </Button>
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setIsGoalDialogOpen(false)}
+                            className="text-xs text-[#717b75] cursor-pointer"
+                          >
+                            关闭
+                          </Button>
+                        </DialogFooter>
+                      </DialogContent>
+                    </Dialog>
+                  </div>
                 </div>
-                <div className="progress-track"><span style={{ width: `${progress}%` }} /></div>
-                <p>已完成 {progress}% · 保持这个节奏</p>
+                <div className="progress-track">
+                  <span
+                    style={{ width: `${progress}%` }}
+                    className={isGoalReached ? "bg-gradient-to-r from-emerald-500 to-teal-600 shadow-sm" : "bg-[#4a9b87]"}
+                  />
+                </div>
+
+                {isGoalReached ? (
+                  <>
+                    <div className="mt-2 p-2 rounded-xl bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200/90 flex items-center justify-between animate-fadeIn">
+                      <div className="flex items-center gap-1.5 text-xs text-emerald-800 font-medium">
+                        <span className="text-base animate-bounce">🏆</span>
+                        <span>今日总目标已达成！</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setShowCheerModal(true)}
+                        className="text-caption font-bold text-[#176b5b] hover:underline flex items-center gap-0.5 cursor-pointer"
+                      >
+                        <span>查看欢呼奖励</span>
+                        <span>→</span>
+                      </button>
+                    </div>
+                    <p className="text-caption text-emerald-700 font-medium flex items-center justify-between mt-1.5">
+                      <span>已完成 {progress}%</span>
+                      <span>今日已产出 {serverTodayWords} 字（超额 {serverTodayWords - (serverDailyGoal || 0)} 字）</span>
+                    </p>
+                  </>
+                ) : hasDailyTarget ? (
+                  <p className="text-caption text-[#86918a] mt-1.5 flex items-center justify-between">
+                    <span>已完成 {progress}%</span>
+                    <span>今日还需创作 {Math.max(0, (serverDailyGoal || 0) - serverTodayWords)} 字达成目标</span>
+                  </p>
+                ) : (
+                  <p className="text-caption text-[#86918a] mt-1.5 flex items-center justify-between">
+                    <span>{isUnlimitedDaily ? "自由创作模式，不设字数上限" : "今日尚未设置具体码字目标"}</span>
+                  </p>
+                )}
               </div>
             </TabsContent>
 
             <TabsContent value="notes" className="inspector-content">
+              {/* 本章关联设定 */}
               <section className="note-section">
-                <p className="eyebrow">出场角色</p>
-                <div className="character-card">
-                  <div className="character-avatar">沈</div>
-                  <div><strong>沈砚</strong><p>旧书铺掌柜 · 主角</p></div>
+                <div className="flex items-center justify-between mb-2">
+                  <p className="eyebrow mb-0">本章关联设定 ({chapterLinks.length})</p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-6 text-[11px] px-2 border-[#cfd6d1] text-[#2c3d33] hover:bg-[#ebf0ec]"
+                    onClick={() => setIsChapterLinksOpen(true)}
+                  >
+                    <Link2 size={12} className="mr-1" /> 管理关联
+                  </Button>
                 </div>
+                {chapterLinks.length === 0 ? (
+                  <p className="text-xs text-[#8a968f] py-1 leading-relaxed">
+                    本章尚未关联特定人物、大纲或设定。点击上方「管理关联」可建立实体绑定，创作时随时参考。
+                  </p>
+                ) : (
+                  <div className="space-y-1.5 pt-1 max-h-48 overflow-y-auto pr-1">
+                    {chapterLinks.map((link) => {
+                      let label = "";
+                      let badge = "";
+                      let tagClass = "bg-gray-100 text-gray-700 border-gray-200";
+                      if (link.entityType === "character") {
+                        const char = charactersList.find((c) => c.id === link.entityId);
+                        label = char ? char.name : `角色 (#${link.entityId.slice(0, 5)})`;
+                        badge = "角色";
+                        tagClass = "bg-purple-50 text-purple-800 border-purple-200";
+                      } else if (link.entityType === "outline") {
+                        const o = outlinesList.find((item) => item.id === link.entityId);
+                        label = o ? o.title : `大纲 (#${link.entityId.slice(0, 5)})`;
+                        badge = "大纲";
+                        tagClass = "bg-blue-50 text-blue-800 border-blue-200";
+                      } else if (link.entityType === "world") {
+                        const w = worldList.find((item) => item.id === link.entityId);
+                        label = w ? w.name : `设定 (#${link.entityId.slice(0, 5)})`;
+                        badge = "设定";
+                        tagClass = "bg-amber-50 text-amber-800 border-amber-200";
+                      } else if (link.entityType === "timeline") {
+                        const t = timelineList.find((item) => item.id === link.entityId);
+                        label = t ? (t.title || t.name) : `事件 (#${link.entityId.slice(0, 5)})`;
+                        badge = "事件";
+                        tagClass = "bg-emerald-50 text-emerald-800 border-emerald-200";
+                      }
+                      return (
+                        <div
+                          key={`${link.entityType}:${link.entityId}`}
+                          className="flex items-center justify-between text-xs px-2.5 py-1.5 rounded-lg bg-[#fffefb] border border-[#e8ebe7]"
+                        >
+                          <span className="font-medium text-[#202923] truncate mr-2">{label}</span>
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded border shrink-0 font-medium ${tagClass}`}>
+                            {badge}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
+
+              <section className="note-section">
+                <p className="eyebrow">作品设定角色 ({charactersList.length})</p>
+                {charactersList.length === 0 ? (
+                  <p className="text-xs text-[#8a968f] py-2">暂无角色设定，可在侧边栏「角色」面板添加</p>
+                ) : (
+                  <div className="space-y-2">
+                    {charactersList.slice(0, 4).map((c) => (
+                      <div key={c.id} className="character-card">
+                        <div className="character-avatar">{c.name.slice(0, 1)}</div>
+                        <div>
+                          <strong>{c.name}</strong>
+                          <p>{c.role} · {c.description.slice(0, 24)}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </section>
               <section className="note-section">
-                <p className="eyebrow">关键线索</p>
-                <ul className="clue-list">
-                  <li>朱砂所写“故人已归”</li>
-                  <li>北山雪中的十年秘密</li>
-                  <li>尚未露面的雨夜来客</li>
-                </ul>
+                <p className="eyebrow">世界观与线索 ({worldList.length})</p>
+                {worldList.length === 0 ? (
+                  <p className="text-xs text-[#8a968f] py-2">暂无世界观条目，可在「设定」面板沉淀世界背景</p>
+                ) : (
+                  <ul className="clue-list">
+                    {worldList.slice(0, 3).map((w) => (
+                      <li key={w.id}>
+                        <span className="font-semibold text-[#1f2b25]">{w.name}</span>
+                        {w.summary ? `：${w.summary}` : ""}
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </section>
               <section className="note-section">
-                <p className="eyebrow">时间与地点</p>
-                <div className="info-row"><Clock3 size={15} /><span>霜降后第三日 · 三更</span></div>
-                <div className="info-row"><Globe2 size={15} /><span>临川城 · 青石巷</span></div>
+                <p className="eyebrow">当前章节信息</p>
+                <div className="info-row"><FileClock size={15} /><span>修订版本：v{selected.revision ?? 1}</span></div>
+                <div className="info-row"><Check size={15} /><span>状态：{selected.status === "completed" || selected.status === "done" ? "已完成" : "草稿中"}</span></div>
+                <div className="info-row"><Globe2 size={15} /><span>所属作品：{currentWork?.title || "未命名作品"}</span></div>
               </section>
             </TabsContent>
           </Tabs>
         </aside>
-      </div>
+      </>
+    )
+  ) : activeView === "outline" ? (
+      <OutlineView
+        workId={activeWorkId}
+        volumes={volumes}
+        chapters={chapters}
+      />
+    ) : activeView === "characters" ? (
+      <CharactersView
+        workId={activeWorkId}
+        onCharactersChanged={setCharactersList}
+      />
+    ) : activeView === "world" ? (
+      <WorldView
+        workId={activeWorkId}
+      />
+    ) : activeView === "timeline" ? (
+      <TimelineView
+        workId={activeWorkId}
+        characters={charactersList}
+        chapters={chapters}
+      />
+    ) : activeView === "stats" ? (
+      <StatsView
+        workId={activeWorkId}
+        workTitle={currentWork?.title}
+        stats={workStats}
+        isLoading={isLoadingWorkspace}
+        onGoalUpdated={(updated) => setWorkStats(updated)}
+        onRefresh={() => {
+          if (activeWorkId) {
+            loadWorkStats(activeWorkId);
+          }
+        }}
+      />
+    ) : null}
+  </div>
 
       <div className="desktop-notice">
         <BookOpen />
         <strong>请使用桌面浏览器打开</strong>
         <span>第一版专为桌面写作场景设计。</span>
       </div>
+
+      {/* 达成今日总目标专属奖励欢呼动态提示 */}
+      {showCheerModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fadeIn">
+          {/* 礼花与彩带飘落动效 */}
+          <div className="absolute inset-0 pointer-events-none overflow-hidden">
+            {[...Array(20)].map((_, i) => (
+              <span
+                key={i}
+                className="absolute text-xl sm:text-3xl animate-confetti select-none"
+                style={{
+                  left: `${(i * 5) + 1.5}%`,
+                  top: `-${20 + (i % 5) * 16}px`,
+                  animationDelay: `${(i * 0.14) % 2.0}s`,
+                  animationDuration: `${2.6 + (i % 4) * 0.4}s`,
+                }}
+              >
+                {["🎉", "✨", "🎊", "🌟", "🏆", "📜", "💫"][i % 7]}
+              </span>
+            ))}
+          </div>
+
+          {/* 欢呼庆祝卡片 */}
+          <div className="relative w-full max-w-md bg-gradient-to-b from-[#fffefb] via-[#f7fbf9] to-[#edf6f2] border-2 border-[#176b5b]/30 rounded-3xl shadow-2xl p-6 sm:p-8 text-center space-y-4 animate-cheer-bounce">
+            {/* 关闭按钮 */}
+            <button
+              type="button"
+              onClick={() => setShowCheerModal(false)}
+              className="absolute top-4 right-4 p-1.5 rounded-full text-[#7d8c85] hover:text-[#202923] hover:bg-[#e4ede8] transition-colors cursor-pointer"
+              title="关闭"
+            >
+              <X size={18} />
+            </button>
+
+            {/* 水墨光晕 */}
+            <div className="absolute -top-12 -right-12 w-40 h-40 rounded-full bg-emerald-400/25 blur-2xl pointer-events-none animate-ink-pulse-glow" />
+            <div className="absolute -bottom-12 -left-12 w-40 h-40 rounded-full bg-[#176b5b]/20 blur-2xl pointer-events-none" />
+
+            {/* 黄金奖杯徽章 */}
+            <div className="relative inline-block mx-auto">
+              <div className="w-20 h-20 rounded-3xl bg-gradient-to-tr from-[#176b5b] via-[#22806e] to-[#36a891] flex items-center justify-center text-white shadow-xl shadow-[#176b5b]/30">
+                <Trophy className="w-10 h-10 text-amber-300 animate-cheer-sparkle" />
+              </div>
+              <span className="absolute -bottom-2 -right-2 px-2.5 py-0.5 rounded-full bg-gradient-to-r from-amber-400 to-amber-500 text-amber-950 font-bold text-[11px] shadow-sm animate-pulse">
+                今日达标
+              </span>
+            </div>
+
+            <div className="space-y-1.5 relative z-10">
+              <h3 className="font-serif text-2xl font-bold text-[#182620]">
+                🎉 翰墨生辉 · 今日目标圆满达成！
+              </h3>
+              <p className="text-xs text-[#52645c] leading-relaxed max-w-xs mx-auto">
+                笔力雄健，落墨千言！您今日全书已累计创作{" "}
+                <strong className="text-[#176b5b] font-mono text-sm">{todayWords}</strong> 字，顺利达成每日总目标（{dailyGoal} 字）！
+              </p>
+            </div>
+
+            {/* 荣誉表彰卡片 */}
+            <div className="relative z-10 p-4 rounded-2xl bg-white/95 border border-[#bad4cb] shadow-xs text-left space-y-2 backdrop-blur-xs">
+              <div className="flex items-center justify-between text-xs text-[#202923]">
+                <span className="font-semibold flex items-center gap-1.5 text-[#1b2b24]">
+                  <Award className="w-4 h-4 text-amber-600" />
+                  【今日全勤文宗】荣誉称号已授予
+                </span>
+                <span className="font-mono font-bold text-emerald-800 bg-emerald-100/90 px-2 py-0.5 rounded-full text-[11px]">
+                  达成率 {Math.round((todayWords / dailyGoal) * 100)}%
+                </span>
+              </div>
+              <p className="text-xs text-[#63736c] italic font-serif leading-relaxed">
+                “行云流水，落墨成卷；日拱一卒，功不唐捐。”
+              </p>
+              <div className="pt-2 border-t border-[#ecebe6] flex items-center justify-between text-[11px] text-[#7d8c85]">
+                <span>🔥 连续连载创作：<strong>12 天</strong></span>
+                <span>超越全站 88% 的签约作者</span>
+              </div>
+            </div>
+
+            {/* 操作按钮 */}
+            <div className="relative z-10 pt-2 flex items-center justify-center gap-3">
+              <Button
+                onClick={() => setShowCheerModal(false)}
+                className="h-10 px-6 bg-[#176b5b] hover:bg-[#12594b] text-white font-medium rounded-xl shadow-md shadow-[#176b5b]/25 cursor-pointer flex items-center gap-1.5"
+              >
+                <Sparkles className="w-4 h-4" />
+                <span>收下奖励 · 继续挥毫</span>
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 新建长篇作品弹窗 */}
+      <CreateWorkDialog
+        open={isCreateWorkOpen}
+        onOpenChange={setIsCreateWorkOpen}
+        onCreated={handleWorkCreated}
+        onBeforeCreate={handleBeforeCreateWork}
+      />
+
+      {/* 新建分卷弹窗 */}
+      <CreateVolumeDialog
+        open={isCreateVolumeOpen}
+        onOpenChange={setIsCreateVolumeOpen}
+        workId={activeWorkId}
+        workTitle={currentWork?.title}
+        volumeCount={volumes.length}
+        onCreated={handleVolumeCreated}
+      />
+
+      {/* 服务端加密 AI 模型配置弹窗 */}
+      <AiSettingsDialog
+        open={isAiSettingsOpen}
+        onOpenChange={setIsAiSettingsOpen}
+      />
+
+      {/* 章节关联设定管理弹窗 */}
+      {selected && selected.id !== "placeholder" && (
+        <ChapterLinksDialog
+          open={isChapterLinksOpen}
+          onOpenChange={setIsChapterLinksOpen}
+          chapterId={selected.id}
+          chapterTitle={selected.title}
+          characters={charactersList}
+          worldEntries={worldList}
+          outlines={outlinesList}
+          timelineEvents={timelineList}
+          linkedItems={chapterLinks}
+          onLinksChanged={(updated) => setChapterLinks(updated)}
+        />
+      )}
     </main>
   );
 }

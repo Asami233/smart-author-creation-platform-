@@ -3,7 +3,9 @@
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
+  ArrowLeft,
   ArrowRight,
+  Check,
   CheckCircle2,
   Eye,
   EyeOff,
@@ -12,55 +14,61 @@ import {
   Loader2,
   Lock,
   Mail,
-  Phone,
+  RefreshCw,
   ShieldCheck,
-  Smartphone,
+  Sparkles,
   User,
-  UserCheck,
+  Zap,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/lib/client/auth";
 
-type AuthMode = "password-login" | "code-login" | "register";
+type Mode = "password-login" | "code-login" | "register" | "forgot-password";
 
 export function AuthCard() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const returnTo = searchParams.get("returnTo") || "/";
 
-  const { loginWithPassword, loginWithCode, register, loginAsGuest, sendVerificationCode } = useAuth();
+  const {
+    loginWithPassword,
+    startEmailLoginCode,
+    verifyEmailLoginCode,
+    startEmailRegister,
+    verifyEmailRegister,
+    startPasswordReset,
+    confirmPasswordReset,
+    loginAsGuest,
+  } = useAuth();
 
-  // 当前主 Tab: "login" 或 "register"
-  const [mainTab, setMainTab] = useState<"login" | "register">("login");
-  // 登录子方式: "password" 或 "code"
-  const [loginMethod, setLoginMethod] = useState<"password" | "code">("password");
+  // 主模式
+  const [mode, setMode] = useState<Mode>("password-login");
 
-  // 表单输入项
-  const [account, setAccount] = useState("");
+  // 表单字段
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [penName, setPenName] = useState("");
+  const [code, setCode] = useState("");
+  const [newPassword, setNewPassword] = useState("");
 
-  const [phoneOrEmail, setPhoneOrEmail] = useState("");
-  const [verifyCode, setVerifyCode] = useState("");
+  // 注册/重置两步流程控制
+  const [step, setStep] = useState<"input" | "verify">("input");
+  const [devCodeHint, setDevCodeHint] = useState<string | null>(null);
+
+  // 倒计时与加载状态
   const [countdown, setCountdown] = useState(0);
-
-  const [regPenName, setRegPenName] = useState("");
-  const [regAccount, setRegAccount] = useState("");
-  const [regPassword, setRegPassword] = useState("");
-  const [regConfirmPassword, setRegConfirmPassword] = useState("");
-  const [regAgreement, setRegAgreement] = useState(true);
-
-  // 交互状态
   const [isLoading, setIsLoading] = useState(false);
   const [guestLoading, setGuestLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successInfo, setSuccessInfo] = useState<string | null>(null);
+  const [isSuccess, setIsSuccess] = useState(false);
+  const [isShaking, setIsShaking] = useState(false);
 
-  // 倒计时计时器
+  // 倒计时控制
   useEffect(() => {
     if (countdown <= 0) return;
     const timer = setInterval(() => {
@@ -69,492 +77,763 @@ export function AuthCard() {
     return () => clearInterval(timer);
   }, [countdown]);
 
-  // 发送验证码
-  const handleSendCode = async () => {
-    if (!phoneOrEmail.trim()) {
-      setErrorMessage("请先输入手机号码或电子邮箱");
-      return;
-    }
-    setErrorMessage(null);
-    try {
-      const res = await sendVerificationCode(phoneOrEmail.trim());
-      setCountdown(60);
-      setSuccessInfo(res.message);
-      // 自动填充演示验证码方便用户体验
-      setVerifyCode("888888");
-      setTimeout(() => setSuccessInfo(null), 6000);
-    } catch (err) {
-      setErrorMessage(err instanceof Error ? err.message : "验证码发送失败");
-    }
+  // 触发抖动提示
+  const triggerShake = (msg: string) => {
+    setErrorMessage(msg);
+    setIsShaking(true);
+    setTimeout(() => setIsShaking(false), 500);
   };
 
-  // 密码登录
+  // 切换模式时重置部分瞬态
+  const handleSwitchMode = (target: Mode) => {
+    setMode(target);
+    setStep("input");
+    setErrorMessage(null);
+    setSuccessInfo(null);
+    setDevCodeHint(null);
+    setCode("");
+  };
+
+  // 密码复杂度分析
+  const hasMinLength = password.length >= 8 && password.length <= 128;
+  const hasLetter = /[A-Za-z]/.test(password);
+  const hasNumber = /\d/.test(password);
+  const isPasswordValid = hasMinLength && hasLetter && hasNumber;
+
+  let passwordStrength = 0;
+  if (password.length >= 8) passwordStrength += 1;
+  if (hasLetter && hasNumber) passwordStrength += 1;
+  if (password.length >= 12 && /[^A-Za-z0-9]/.test(password)) passwordStrength += 1;
+
+  // 1. 密码登录提交
   const handlePasswordLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!account.trim()) {
-      setErrorMessage("请输入作者账号、手机号或邮箱");
+    if (!email.trim() || !email.includes("@")) {
+      triggerShake("请输入合法的作者邮箱地址");
       return;
     }
     if (!password) {
-      setErrorMessage("请输入密码");
+      triggerShake("请输入登录密码");
       return;
     }
     setErrorMessage(null);
     setIsLoading(true);
     try {
-      await loginWithPassword(account.trim(), password);
-      router.push(returnTo);
+      await loginWithPassword(email, password);
+      setIsSuccess(true);
+      setSuccessInfo("登录成功，正在进入书卷世界…");
+      setTimeout(() => router.push(returnTo), 500);
     } catch (err) {
-      setErrorMessage(err instanceof Error ? err.message : "登录失败，请重试");
+      triggerShake(err instanceof Error ? err.message : "邮箱或密码错误");
+    } finally {
       setIsLoading(false);
     }
   };
 
-  // 验证码登录
+  // 2. 免密登录 - 发送验证码
+  const handleSendLoginCode = async () => {
+    if (!email.trim() || !email.includes("@")) {
+      triggerShake("请输入要接收验证码的邮箱地址");
+      return;
+    }
+    setErrorMessage(null);
+    setIsLoading(true);
+    try {
+      const res = await startEmailLoginCode(email);
+      setCountdown(res.retryAfterSeconds || 60);
+      setSuccessInfo("验证码已发送，请查收邮箱");
+      if (res.devCode) {
+        setDevCodeHint(res.devCode);
+        setCode(res.devCode);
+      }
+    } catch (err) {
+      triggerShake(err instanceof Error ? err.message : "验证码发送失败");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // 3. 免密登录 - 提交验证
   const handleCodeLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!phoneOrEmail.trim()) {
-      setErrorMessage("请输入手机号或邮箱");
+    if (!email.trim() || !email.includes("@")) {
+      triggerShake("请输入邮箱");
       return;
     }
-    if (!verifyCode.trim()) {
-      setErrorMessage("请输入6位验证码");
+    if (!code.trim() || code.trim().length !== 6) {
+      triggerShake("请输入6位数字验证码");
       return;
     }
     setErrorMessage(null);
     setIsLoading(true);
     try {
-      await loginWithCode(phoneOrEmail.trim(), verifyCode.trim());
-      router.push(returnTo);
+      await verifyEmailLoginCode(email, code);
+      setIsSuccess(true);
+      setSuccessInfo("验证成功，正在开启工作台…");
+      setTimeout(() => router.push(returnTo), 500);
     } catch (err) {
-      setErrorMessage(err instanceof Error ? err.message : "验证失败，请重试");
+      triggerShake(err instanceof Error ? err.message : "验证码错误或已过期");
+    } finally {
       setIsLoading(false);
     }
   };
 
-  // 注册新作者
-  const handleRegister = async (e: React.FormEvent) => {
+  // 4. 注册 - 发送验证码进入第二步
+  const handleRegisterStart = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!regPenName.trim()) {
-      setErrorMessage("请设定您的作者笔名（后续可在设置中修改）");
+    if (!email.trim() || !email.includes("@")) {
+      triggerShake("请输入合法的作者电子邮箱");
       return;
     }
-    if (!regAccount.trim()) {
-      setErrorMessage("请输入手机号或常用邮箱");
+    if (!penName.trim()) {
+      triggerShake("请设置您的作者笔名");
       return;
     }
-    if (!regPassword || regPassword.length < 6) {
-      setErrorMessage("密码长度不得少于6位");
-      return;
-    }
-    if (regPassword !== regConfirmPassword) {
-      setErrorMessage("两次输入的密码不一致");
-      return;
-    }
-    if (!regAgreement) {
-      setErrorMessage("请阅读并同意创作者服务与数据保密协议");
+    if (!isPasswordValid) {
+      triggerShake("密码必须在8位以上，且同时包含字母与数字");
       return;
     }
     setErrorMessage(null);
     setIsLoading(true);
     try {
-      await register(regPenName.trim(), regAccount.trim(), regPassword);
-      router.push(returnTo);
+      const res = await startEmailRegister(email, password, penName);
+      setCountdown(res.retryAfterSeconds || 60);
+      setStep("verify");
+      setSuccessInfo("验证码已发送至您的邮箱");
+      if (res.devCode) {
+        setDevCodeHint(res.devCode);
+        setCode(res.devCode);
+      }
     } catch (err) {
-      setErrorMessage(err instanceof Error ? err.message : "注册失败，请稍后再试");
+      triggerShake(err instanceof Error ? err.message : "注册请求发起失败");
+    } finally {
       setIsLoading(false);
     }
   };
 
-  // 一键游客体验
-  const handleGuestLogin = async () => {
+  // 5. 注册 - 验证并完成注册
+  const handleRegisterVerify = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!code.trim() || code.trim().length !== 6) {
+      triggerShake("请输入6位验证码");
+      return;
+    }
     setErrorMessage(null);
+    setIsLoading(true);
+    try {
+      await verifyEmailRegister(email, code);
+      setIsSuccess(true);
+      setSuccessInfo("作者账号注册成功，即刻落笔成卷！");
+      setTimeout(() => router.push(returnTo), 600);
+    } catch (err) {
+      triggerShake(err instanceof Error ? err.message : "验证码无效或已失效");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // 6. 找回密码流程
+  const handleForgotStart = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email.trim() || !email.includes("@")) {
+      triggerShake("请输入要重置密码的邮箱");
+      return;
+    }
+    setErrorMessage(null);
+    setIsLoading(true);
+    try {
+      const res = await startPasswordReset(email);
+      setCountdown(res.retryAfterSeconds || 60);
+      setStep("verify");
+      setSuccessInfo("重置验证码已发送");
+      if (res.devCode) {
+        setDevCodeHint(res.devCode);
+        setCode(res.devCode);
+      }
+    } catch (err) {
+      triggerShake(err instanceof Error ? err.message : "发送重置码失败");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleForgotVerify = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!code.trim() || code.trim().length !== 6) {
+      triggerShake("请输入6位验证码");
+      return;
+    }
+    const hasNewLetter = /[A-Za-z]/.test(newPassword);
+    const hasNewNumber = /\d/.test(newPassword);
+    if (newPassword.length < 8 || !hasNewLetter || !hasNewNumber) {
+      triggerShake("新密码必须至少8位且同时包含字母与数字");
+      return;
+    }
+    setErrorMessage(null);
+    setIsLoading(true);
+    try {
+      await confirmPasswordReset(email, code, newPassword);
+      setSuccessInfo("密码重置成功，请使用新密码登录");
+      setTimeout(() => {
+        handleSwitchMode("password-login");
+      }, 1000);
+    } catch (err) {
+      triggerShake(err instanceof Error ? err.message : "密码重置失败");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // 7. 游客快捷进入
+  const handleGuestLogin = async () => {
     setGuestLoading(true);
     try {
       await loginAsGuest();
-      router.push(returnTo);
-    } catch (err) {
-      setErrorMessage("进入体验环境失败");
+      setIsSuccess(true);
+      setSuccessInfo("已为您开启快捷免登录体验…");
+      setTimeout(() => router.push(returnTo), 400);
+    } finally {
       setGuestLoading(false);
     }
   };
 
   return (
-    <div className="w-full max-w-md mx-auto p-6 sm:p-8 bg-[#fffefb] rounded-2xl sm:rounded-3xl border border-[#e5e4de] shadow-[0_12px_40px_rgba(30,40,35,0.06)] flex flex-col justify-between">
-      {/* 顶部标题与移动端徽标 */}
-      <div>
-        <div className="flex lg:hidden items-center justify-center gap-2 mb-5">
-          <div className="w-8 h-8 rounded-lg bg-[#176b5b] flex items-center justify-center font-serif text-lg font-bold text-white shadow-sm">
-            砚
-          </div>
-          <span className="font-serif font-bold text-[#1f332d] text-base">
-            智能作者创作平台
-          </span>
-        </div>
+    <div
+      className={`w-full max-w-md bg-[#fffefb]/95 backdrop-blur-md rounded-3xl border border-[#dedcd4] shadow-2xl p-6 sm:p-8 transition-all duration-300 relative overflow-hidden ${
+        isShaking ? "animate-auth-shake" : ""
+      }`}
+    >
+      {/* 装饰水墨光效 */}
+      <div className="absolute -top-24 -right-24 w-48 h-48 rounded-full bg-[#176b5b]/10 blur-2xl pointer-events-none animate-ink-pulse-glow" />
+      <div className="absolute -bottom-24 -left-24 w-48 h-48 rounded-full bg-[#4a9b87]/10 blur-2xl pointer-events-none" />
 
-        <div className="text-center sm:text-left mb-6">
-          <h2 className="text-2xl font-serif font-bold text-[#202923] tracking-tight">
-            {mainTab === "login" ? "作者登录" : "加入创作"}
-          </h2>
-          <p className="text-xs text-[#737b76] mt-1.5">
-            {mainTab === "login"
-              ? "登入您的专属写作空间，续写未竟篇章"
-              : "开启专属个人写作库，让奇思妙想落地生根"}
-          </p>
+      {/* 顶部标题区 */}
+      <div className="text-center mb-6 relative z-10">
+        <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-gradient-to-tr from-[#176b5b] to-[#258270] text-white shadow-md shadow-[#176b5b]/25 mb-3 animate-ink-float">
+          <Feather className="w-6 h-6" />
         </div>
+        <h2 className="text-2xl font-serif font-bold text-[#1e2621]">
+          {mode === "register"
+            ? "注册作者账号"
+            : mode === "forgot-password"
+            ? "找回登录密码"
+            : "欢迎归案 · 作者登录"}
+        </h2>
+        <p className="text-xs text-[#758079] mt-1">
+          {mode === "register"
+            ? "开启云端备份与数据安全隔离 · 见证百万字传奇"
+            : mode === "forgot-password"
+            ? "通过已绑定的电子邮箱重设密码"
+            : "以邮箱验证身份 · 畅享沉浸式网络文学长卷创作"}
+        </p>
+      </div>
 
-        {/* 顶部主选项卡：登录 / 注册 */}
-        <div className="flex p-1 bg-[#f0eee9] rounded-xl mb-6">
+      {/* 主模式切换 Tab（在非找回密码模式下展示） */}
+      {mode !== "forgot-password" && (
+        <div className="grid grid-cols-3 gap-1 p-1 bg-[#eceae3] rounded-xl mb-5 text-xs font-medium relative z-10">
           <button
             type="button"
-            onClick={() => {
-              setMainTab("login");
-              setErrorMessage(null);
-            }}
-            className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-all ${
-              mainTab === "login"
-                ? "bg-white text-[#176b5b] shadow-xs"
-                : "text-[#6b7570] hover:text-[#202923]"
+            onClick={() => handleSwitchMode("password-login")}
+            className={`py-2 rounded-lg transition-all text-center ${
+              mode === "password-login"
+                ? "bg-[#fffefb] text-[#176b5b] font-bold shadow-xs"
+                : "text-[#626e67] hover:text-[#202923]"
             }`}
           >
-            作者登录
+            密码登录
           </button>
           <button
             type="button"
-            onClick={() => {
-              setMainTab("register");
-              setErrorMessage(null);
-            }}
-            className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-all ${
-              mainTab === "register"
-                ? "bg-white text-[#176b5b] shadow-xs"
-                : "text-[#6b7570] hover:text-[#202923]"
+            onClick={() => handleSwitchMode("code-login")}
+            className={`py-2 rounded-lg transition-all text-center ${
+              mode === "code-login"
+                ? "bg-[#fffefb] text-[#176b5b] font-bold shadow-xs"
+                : "text-[#626e67] hover:text-[#202923]"
             }`}
           >
-            注册新作者
+            免密验证码
+          </button>
+          <button
+            type="button"
+            onClick={() => handleSwitchMode("register")}
+            className={`py-2 rounded-lg transition-all text-center ${
+              mode === "register"
+                ? "bg-[#fffefb] text-[#176b5b] font-bold shadow-xs"
+                : "text-[#626e67] hover:text-[#202923]"
+            }`}
+          >
+            注册账号
           </button>
         </div>
+      )}
 
-        {/* 提示信息 */}
-        {errorMessage && (
-          <div className="mb-4 p-3 rounded-lg bg-red-50/90 border border-red-200 text-red-700 text-xs flex items-start gap-2 animate-in fade-in slide-in-from-top-1">
-            <div className="w-1.5 h-1.5 rounded-full bg-red-500 mt-1.5 shrink-0" />
-            <div className="flex-1">{errorMessage}</div>
+      {/* 提示与状态展示 */}
+      {errorMessage && (
+        <div className="mb-4 p-3 rounded-xl bg-rose-50 border border-rose-200/80 text-rose-700 text-xs flex items-center gap-2 animate-fadeIn">
+          <span className="w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0" />
+          <span>{errorMessage}</span>
+        </div>
+      )}
+
+      {successInfo && (
+        <div className="mb-4 p-3 rounded-xl bg-emerald-50 border border-emerald-200/80 text-emerald-800 text-xs flex items-center gap-2 animate-fadeIn">
+          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 animate-success-pop" />
+          <span>{successInfo}</span>
+        </div>
+      )}
+
+      {/* 本地开发环境智能验证码辅助条 */}
+      {devCodeHint && (
+        <div className="mb-4 p-2.5 rounded-xl bg-amber-50/90 border border-amber-200 text-amber-900 text-xs flex items-center justify-between animate-fadeIn">
+          <div className="flex items-center gap-1.5">
+            <Zap className="w-3.5 h-3.5 text-amber-600" />
+            <span>本地调试验证码：</span>
+            <code className="font-mono font-bold tracking-widest bg-amber-200/60 px-1.5 py-0.5 rounded text-amber-950">
+              {devCodeHint}
+            </code>
           </div>
-        )}
+          <button
+            type="button"
+            onClick={() => setCode(devCodeHint)}
+            className="text-[11px] font-semibold text-[#176b5b] hover:underline"
+          >
+            一键填入
+          </button>
+        </div>
+      )}
 
-        {successInfo && (
-          <div className="mb-4 p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-start gap-2 animate-in fade-in slide-in-from-top-1">
-            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-            <div className="flex-1 font-medium">{successInfo}</div>
-          </div>
-        )}
-
-        {/* 主内容：登录模式 */}
-        {mainTab === "login" && (
-          <div>
-            {/* 登录方式小切换：密码登录 vs 验证码快捷登录 */}
-            <div className="flex items-center justify-between border-b border-[#ecebe6] pb-2.5 mb-4 text-xs">
-              <span className="text-[#88918c] font-medium">请选择登录方式</span>
-              <div className="flex gap-4">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setLoginMethod("password");
-                    setErrorMessage(null);
-                  }}
-                  className={`relative font-medium transition-colors ${
-                    loginMethod === "password"
-                      ? "text-[#176b5b] font-semibold"
-                      : "text-[#7b837e] hover:text-[#202923]"
-                  }`}
-                >
-                  账号密码
-                </button>
-                <span className="text-[#d8ded9]">|</span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setLoginMethod("code");
-                    setErrorMessage(null);
-                  }}
-                  className={`relative font-medium transition-colors ${
-                    loginMethod === "code"
-                      ? "text-[#176b5b] font-semibold"
-                      : "text-[#7b837e] hover:text-[#202923]"
-                  }`}
-                >
-                  验证码快速登录
-                </button>
-              </div>
-            </div>
-
-            {loginMethod === "password" ? (
-              <form onSubmit={handlePasswordLogin} className="space-y-4">
-                <div className="space-y-1.5">
-                  <Label className="text-xs text-[#526058] font-medium">账号 / 手机号 / 邮箱</Label>
-                  <div className="relative">
-                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-[#9aa29e]">
-                      <User className="w-4 h-4" />
-                    </div>
-                    <Input
-                      type="text"
-                      placeholder="请输入您的作者账号或邮箱"
-                      value={account}
-                      onChange={(e) => setAccount(e.target.value)}
-                      className="pl-9 text-xs h-10 rounded-xl bg-[#fcfcfb] border-[#d8ded9] focus-visible:border-[#176b5b] focus-visible:ring-1 focus-visible:ring-[#176b5b]"
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-xs text-[#526058] font-medium">密码</Label>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        alert("演示环境支持任意测试密码或使用一键体验通道")
-                      }
-                      className="text-[11px] text-[#176b5b] hover:underline"
-                    >
-                      忘记密码？
-                    </button>
-                  </div>
-                  <div className="relative">
-                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-[#9aa29e]">
-                      <Lock className="w-4 h-4" />
-                    </div>
-                    <Input
-                      type={showPassword ? "text" : "password"}
-                      placeholder="请输入您的登录密码"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      className="pl-9 pr-9 text-xs h-10 rounded-xl bg-[#fcfcfb] border-[#d8ded9] focus-visible:border-[#176b5b] focus-visible:ring-1 focus-visible:ring-[#176b5b]"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword(!showPassword)}
-                      className="absolute inset-y-0 right-0 pr-3 flex items-center text-[#9aa29e] hover:text-[#526058]"
-                    >
-                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
-                  </div>
-                </div>
-
-                <Button
-                  type="submit"
-                  disabled={isLoading}
-                  className="w-full h-10 mt-2 bg-[#176b5b] hover:bg-[#13594b] text-white rounded-xl text-xs font-semibold shadow-sm transition-all"
-                >
-                  {isLoading ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      登入工作台...
-                    </>
-                  ) : (
-                    <>
-                      立即登录
-                      <ArrowRight className="w-3.5 h-3.5 ml-1.5" />
-                    </>
-                  )}
-                </Button>
-              </form>
-            ) : (
-              <form onSubmit={handleCodeLogin} className="space-y-4">
-                <div className="space-y-1.5">
-                  <Label className="text-xs text-[#526058] font-medium">手机号码或邮箱</Label>
-                  <div className="relative">
-                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-[#9aa29e]">
-                      <Smartphone className="w-4 h-4" />
-                    </div>
-                    <Input
-                      type="text"
-                      placeholder="用于接收验证短信或邮件"
-                      value={phoneOrEmail}
-                      onChange={(e) => setPhoneOrEmail(e.target.value)}
-                      className="pl-9 text-xs h-10 rounded-xl bg-[#fcfcfb] border-[#d8ded9] focus-visible:border-[#176b5b] focus-visible:ring-1 focus-visible:ring-[#176b5b]"
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-1.5">
-                  <Label className="text-xs text-[#526058] font-medium">验证码</Label>
-                  <div className="flex gap-2">
-                    <div className="relative flex-1">
-                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-[#9aa29e]">
-                        <KeyRound className="w-4 h-4" />
-                      </div>
-                      <Input
-                        type="text"
-                        maxLength={6}
-                        placeholder="6位数字验证码"
-                        value={verifyCode}
-                        onChange={(e) => setVerifyCode(e.target.value)}
-                        className="pl-9 text-xs h-10 rounded-xl bg-[#fcfcfb] border-[#d8ded9] tracking-widest focus-visible:border-[#176b5b] focus-visible:ring-1 focus-visible:ring-[#176b5b]"
-                      />
-                    </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      disabled={countdown > 0}
-                      onClick={handleSendCode}
-                      className="text-xs h-10 px-3.5 rounded-xl border-[#d8ded9] text-[#24574d] hover:bg-[#eef3f0]"
-                    >
-                      {countdown > 0 ? `${countdown}s 后重发` : "获取验证码"}
-                    </Button>
-                  </div>
-                  <p className="text-[11px] text-[#939a95]">
-                    未注册的手机号验证通过后将自动创建作者档案
-                  </p>
-                </div>
-
-                <Button
-                  type="submit"
-                  disabled={isLoading}
-                  className="w-full h-10 mt-2 bg-[#176b5b] hover:bg-[#13594b] text-white rounded-xl text-xs font-semibold shadow-sm transition-all"
-                >
-                  {isLoading ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      验证并登入...
-                    </>
-                  ) : (
-                    <>
-                      验证登入
-                      <ArrowRight className="w-3.5 h-3.5 ml-1.5" />
-                    </>
-                  )}
-                </Button>
-              </form>
-            )}
-          </div>
-        )}
-
-        {/* 主内容：注册新作者 */}
-        {mainTab === "register" && (
-          <form onSubmit={handleRegister} className="space-y-3.5">
+      {/* 表单渲染区域 */}
+      <div className="relative z-10">
+        {/* 1. 邮箱密码登录 */}
+        {mode === "password-login" && (
+          <form onSubmit={handlePasswordLogin} className="space-y-4">
             <div className="space-y-1.5">
-              <Label className="text-xs text-[#526058] font-medium">作家笔名</Label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-[#9aa29e]">
-                  <Feather className="w-4 h-4" />
-                </div>
-                <Input
-                  type="text"
-                  placeholder="例如：沈砚 / 沧海客 / 拂晓听风"
-                  value={regPenName}
-                  onChange={(e) => setRegPenName(e.target.value)}
-                  className="pl-9 text-xs h-10 rounded-xl bg-[#fcfcfb] border-[#d8ded9] focus-visible:border-[#176b5b] focus-visible:ring-1 focus-visible:ring-[#176b5b]"
-                />
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <Label className="text-xs text-[#526058] font-medium">绑定手机或邮箱</Label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-[#9aa29e]">
-                  <Mail className="w-4 h-4" />
-                </div>
-                <Input
-                  type="text"
-                  placeholder="用于登录与作品凭证保护"
-                  value={regAccount}
-                  onChange={(e) => setRegAccount(e.target.value)}
-                  className="pl-9 text-xs h-10 rounded-xl bg-[#fcfcfb] border-[#d8ded9] focus-visible:border-[#176b5b] focus-visible:ring-1 focus-visible:ring-[#176b5b]"
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2.5">
-              <div className="space-y-1.5">
-                <Label className="text-xs text-[#526058] font-medium">设置密码</Label>
-                <Input
-                  type="password"
-                  placeholder="不少于6位"
-                  value={regPassword}
-                  onChange={(e) => setRegPassword(e.target.value)}
-                  className="text-xs h-10 rounded-xl bg-[#fcfcfb] border-[#d8ded9] focus-visible:border-[#176b5b] focus-visible:ring-1 focus-visible:ring-[#176b5b]"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs text-[#526058] font-medium">确认密码</Label>
-                <Input
-                  type="password"
-                  placeholder="再次输入"
-                  value={regConfirmPassword}
-                  onChange={(e) => setRegConfirmPassword(e.target.value)}
-                  className="text-xs h-10 rounded-xl bg-[#fcfcfb] border-[#d8ded9] focus-visible:border-[#176b5b] focus-visible:ring-1 focus-visible:ring-[#176b5b]"
-                />
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2 pt-1">
-              <input
-                id="agreement"
-                type="checkbox"
-                checked={regAgreement}
-                onChange={(e) => setRegAgreement(e.target.checked)}
-                className="w-3.5 h-3.5 rounded border-[#cfd6d1] text-[#176b5b] focus:ring-[#176b5b]"
+              <Label className="text-xs text-[#525f58] flex items-center gap-1.5">
+                <Mail className="w-3.5 h-3.5 text-[#176b5b]" />
+                <span>电子邮箱</span>
+              </Label>
+              <Input
+                type="email"
+                placeholder="writer@example.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                className="h-10 bg-white/80 border-[#d8d6cc] focus-visible:ring-1 focus-visible:ring-[#176b5b] focus-visible:border-[#176b5b]"
               />
-              <label htmlFor="agreement" className="text-[11px] text-[#717b75] leading-none cursor-pointer">
-                我已阅读并同意
-                <span className="text-[#176b5b] hover:underline mx-1">《创作者服务协议》</span>
-                与
-                <span className="text-[#176b5b] hover:underline ml-1">《本地数据保护承诺》</span>
-              </label>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs text-[#525f58] flex items-center gap-1.5">
+                  <Lock className="w-3.5 h-3.5 text-[#176b5b]" />
+                  <span>登录密码</span>
+                </Label>
+                <button
+                  type="button"
+                  onClick={() => handleSwitchMode("forgot-password")}
+                  className="text-[11px] text-[#717b75] hover:text-[#176b5b] transition-colors"
+                >
+                  忘记密码？
+                </button>
+              </div>
+              <div className="relative">
+                <Input
+                  type={showPassword ? "text" : "password"}
+                  placeholder="请输入您的登录密码"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  className="h-10 pr-10 bg-white/80 border-[#d8d6cc] focus-visible:ring-1 focus-visible:ring-[#176b5b] focus-visible:border-[#176b5b]"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[#98a19c] hover:text-[#424c46]"
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
             </div>
 
             <Button
               type="submit"
-              disabled={isLoading}
-              className="w-full h-10 mt-1.5 bg-[#176b5b] hover:bg-[#13594b] text-white rounded-xl text-xs font-semibold shadow-sm transition-all"
+              disabled={isLoading || isSuccess}
+              className="w-full h-10 bg-[#176b5b] hover:bg-[#12584a] text-white font-medium shadow-md shadow-[#176b5b]/20 transition-all rounded-xl mt-2 cursor-pointer"
             >
               {isLoading ? (
                 <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  创建作者档案...
+                  <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                  <span>正在验证身份…</span>
+                </>
+              ) : isSuccess ? (
+                <>
+                  <Check className="w-4 h-4 mr-1.5" />
+                  <span>登录成功</span>
                 </>
               ) : (
                 <>
-                  完成注册并开启创作
-                  <ArrowRight className="w-3.5 h-3.5 ml-1.5" />
+                  <span>登录作者工作台</span>
+                  <ArrowRight className="w-4 h-4 ml-1.5" />
                 </>
               )}
             </Button>
           </form>
         )}
+
+        {/* 2. 邮箱免密登录 */}
+        {mode === "code-login" && (
+          <form onSubmit={handleCodeLogin} className="space-y-4">
+            <div className="space-y-1.5">
+              <Label className="text-xs text-[#525f58] flex items-center gap-1.5">
+                <Mail className="w-3.5 h-3.5 text-[#176b5b]" />
+                <span>电子邮箱</span>
+              </Label>
+              <div className="flex gap-2">
+                <Input
+                  type="email"
+                  placeholder="writer@example.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                  className="h-10 bg-white/80 border-[#d8d6cc] focus-visible:ring-1 focus-visible:ring-[#176b5b] focus-visible:border-[#176b5b]"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={countdown > 0 || isLoading}
+                  onClick={handleSendLoginCode}
+                  className="h-10 text-xs px-3 whitespace-nowrap border-[#d8d6cc] hover:bg-[#edf4f1] hover:text-[#176b5b] transition-colors"
+                >
+                  {countdown > 0 ? `${countdown}s 后重发` : "获取验证码"}
+                </Button>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs text-[#525f58] flex items-center gap-1.5">
+                <KeyRound className="w-3.5 h-3.5 text-[#176b5b]" />
+                <span>6位邮箱验证码</span>
+              </Label>
+              <Input
+                type="text"
+                inputMode="numeric"
+                maxLength={6}
+                placeholder="6 位数字验证码"
+                value={code}
+                onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
+                className="h-10 font-mono tracking-widest text-center text-sm bg-white/80 border-[#d8d6cc] focus-visible:ring-1 focus-visible:ring-[#176b5b] focus-visible:border-[#176b5b]"
+              />
+            </div>
+
+            <Button
+              type="submit"
+              disabled={isLoading || isSuccess}
+              className="w-full h-10 bg-[#176b5b] hover:bg-[#12584a] text-white font-medium shadow-md shadow-[#176b5b]/20 transition-all rounded-xl mt-2 cursor-pointer"
+            >
+              {isLoading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                  <span>正在验证验证码…</span>
+                </>
+              ) : isSuccess ? (
+                <>
+                  <Check className="w-4 h-4 mr-1.5" />
+                  <span>验证成功</span>
+                </>
+              ) : (
+                <>
+                  <span>立即验证并进入</span>
+                  <ArrowRight className="w-4 h-4 ml-1.5" />
+                </>
+              )}
+            </Button>
+          </form>
+        )}
+
+        {/* 3. 邮箱注册流程 */}
+        {mode === "register" && step === "input" && (
+          <form onSubmit={handleRegisterStart} className="space-y-3.5">
+            <div className="space-y-1.5">
+              <Label className="text-xs text-[#525f58] flex items-center gap-1.5">
+                <Mail className="w-3.5 h-3.5 text-[#176b5b]" />
+                <span>电子邮箱（用于登录与密保）</span>
+              </Label>
+              <Input
+                type="email"
+                placeholder="writer@example.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                className="h-10 bg-white/80 border-[#d8d6cc] focus-visible:ring-1 focus-visible:ring-[#176b5b] focus-visible:border-[#176b5b]"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs text-[#525f58] flex items-center gap-1.5">
+                <User className="w-3.5 h-3.5 text-[#176b5b]" />
+                <span>作者笔名</span>
+              </Label>
+              <Input
+                type="text"
+                placeholder="如：沈砚、青石居士"
+                value={penName}
+                onChange={(e) => setPenName(e.target.value)}
+                required
+                maxLength={40}
+                className="h-10 bg-white/80 border-[#d8d6cc] focus-visible:ring-1 focus-visible:ring-[#176b5b] focus-visible:border-[#176b5b]"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs text-[#525f58] flex items-center gap-1.5">
+                <Lock className="w-3.5 h-3.5 text-[#176b5b]" />
+                <span>设置登录密码（8-128位，需包含字母与数字）</span>
+              </Label>
+              <div className="relative">
+                <Input
+                  type={showPassword ? "text" : "password"}
+                  placeholder="请输入安全密码"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  className="h-10 pr-10 bg-white/80 border-[#d8d6cc] focus-visible:ring-1 focus-visible:ring-[#176b5b] focus-visible:border-[#176b5b]"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[#98a19c] hover:text-[#424c46]"
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+
+              {/* 动态密码强度指示条 */}
+              {password.length > 0 && (
+                <div className="pt-1 space-y-1 animate-fadeIn">
+                  <div className="h-1 w-full bg-[#e8e6df] rounded-full overflow-hidden flex gap-0.5">
+                    <div
+                      className={`h-full transition-all duration-300 ${
+                        passwordStrength >= 1 ? "bg-amber-500 w-1/3" : "w-0"
+                      }`}
+                    />
+                    <div
+                      className={`h-full transition-all duration-300 ${
+                        passwordStrength >= 2 ? "bg-emerald-500 w-1/3" : "w-0"
+                      }`}
+                    />
+                    <div
+                      className={`h-full transition-all duration-300 ${
+                        passwordStrength >= 3 ? "bg-emerald-600 w-1/3" : "w-0"
+                      }`}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between text-[10px] text-[#7a857e]">
+                    <span className="flex items-center gap-1">
+                      <span className={hasMinLength ? "text-emerald-600 font-bold" : ""}>
+                        {hasMinLength ? "✓" : "○"} 8位以上
+                      </span>
+                      <span className={hasLetter ? "text-emerald-600 font-bold" : ""}>
+                        {hasLetter ? "✓" : "○"} 含字母
+                      </span>
+                      <span className={hasNumber ? "text-emerald-600 font-bold" : ""}>
+                        {hasNumber ? "✓" : "○"} 含数字
+                      </span>
+                    </span>
+                    <span className="font-medium">
+                      {passwordStrength === 1 ? "弱" : passwordStrength === 2 ? "中等" : "强"}
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <Button
+              type="submit"
+              disabled={isLoading || !isPasswordValid}
+              className="w-full h-10 bg-[#176b5b] hover:bg-[#12584a] text-white font-medium shadow-md shadow-[#176b5b]/20 transition-all rounded-xl mt-2 cursor-pointer"
+            >
+              {isLoading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                  <span>正在发起注册…</span>
+                </>
+              ) : (
+                <>
+                  <span>获取邮箱验证码并继续</span>
+                  <ArrowRight className="w-4 h-4 ml-1.5" />
+                </>
+              )}
+            </Button>
+          </form>
+        )}
+
+        {/* 注册第二步：验证邮箱 */}
+        {mode === "register" && step === "verify" && (
+          <form onSubmit={handleRegisterVerify} className="space-y-4">
+            <div className="p-3 bg-[#edf5f2] rounded-xl text-xs text-[#2b4c42] space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold">验证码已发送至：</span>
+                <button
+                  type="button"
+                  onClick={() => setStep("input")}
+                  className="text-[#176b5b] hover:underline"
+                >
+                  修改邮箱
+                </button>
+              </div>
+              <p className="font-mono text-[11px] text-[#4d7065]">{email}</p>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs text-[#525f58] flex items-center gap-1.5">
+                  <KeyRound className="w-3.5 h-3.5 text-[#176b5b]" />
+                  <span>输入 6 位邮箱验证码</span>
+                </Label>
+                {countdown > 0 ? (
+                  <span className="text-[11px] text-[#8e9892]">{countdown}s 后可重发</span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleRegisterStart}
+                    className="text-[11px] text-[#176b5b] hover:underline font-medium"
+                  >
+                    重新发送
+                  </button>
+                )}
+              </div>
+              <Input
+                type="text"
+                inputMode="numeric"
+                maxLength={6}
+                placeholder="6 位数字验证码"
+                value={code}
+                onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
+                required
+                className="h-11 font-mono tracking-widest text-center text-base bg-white border-[#d8d6cc] focus-visible:ring-1 focus-visible:ring-[#176b5b] focus-visible:border-[#176b5b]"
+              />
+            </div>
+
+            <Button
+              type="submit"
+              disabled={isLoading || isSuccess}
+              className="w-full h-10 bg-[#176b5b] hover:bg-[#12584a] text-white font-medium shadow-md shadow-[#176b5b]/20 transition-all rounded-xl mt-2 cursor-pointer"
+            >
+              {isLoading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                  <span>正在创建作者主页…</span>
+                </>
+              ) : isSuccess ? (
+                <>
+                  <Check className="w-4 h-4 mr-1.5" />
+                  <span>注册成功</span>
+                </>
+              ) : (
+                <>
+                  <span>完成验证 · 开启笔耕</span>
+                  <ArrowRight className="w-4 h-4 ml-1.5" />
+                </>
+              )}
+            </Button>
+          </form>
+        )}
+
+        {/* 4. 忘记密码流程 */}
+        {mode === "forgot-password" && (
+          <div className="space-y-4">
+            <button
+              type="button"
+              onClick={() => handleSwitchMode("password-login")}
+              className="inline-flex items-center gap-1.5 text-xs text-[#637069] hover:text-[#176b5b] mb-1"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              <span>返回密码登录</span>
+            </button>
+
+            {step === "input" ? (
+              <form onSubmit={handleForgotStart} className="space-y-4">
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-[#525f58]">输入注册邮箱</Label>
+                  <Input
+                    type="email"
+                    placeholder="writer@example.com"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    required
+                    className="h-10 bg-white/80 border-[#d8d6cc]"
+                  />
+                </div>
+                <Button
+                  type="submit"
+                  disabled={isLoading}
+                  className="w-full h-10 bg-[#176b5b] hover:bg-[#12584a] text-white rounded-xl cursor-pointer"
+                >
+                  {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "发送重置验证码"}
+                </Button>
+              </form>
+            ) : (
+              <form onSubmit={handleForgotVerify} className="space-y-3.5">
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-[#525f58]">6 位验证码</Label>
+                  <Input
+                    type="text"
+                    maxLength={6}
+                    placeholder="验证码"
+                    value={code}
+                    onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
+                    required
+                    className="h-10 text-center font-mono tracking-widest bg-white/80 border-[#d8d6cc]"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-[#525f58]">设置新密码</Label>
+                  <Input
+                    type="password"
+                    placeholder="8位以上，含字母与数字"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    required
+                    className="h-10 bg-white/80 border-[#d8d6cc]"
+                  />
+                </div>
+                <Button
+                  type="submit"
+                  disabled={isLoading}
+                  className="w-full h-10 bg-[#176b5b] hover:bg-[#12584a] text-white rounded-xl cursor-pointer"
+                >
+                  {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "确认重设密码"}
+                </Button>
+              </form>
+            )}
+          </div>
+        )}
       </div>
 
-      {/* 分割线与游客一键体验通道 */}
-      <div className="mt-8 pt-5 border-t border-[#eeede8]">
-        <div className="relative flex justify-center text-[11px] uppercase mb-4">
-          <span className="bg-[#fffefb] px-3 text-[#9aa29d]">或者</span>
-        </div>
-
-        <Button
+      {/* 底部隔离线与快捷游客体验通道 */}
+      <div className="mt-6 pt-5 border-t border-[#dedcd4] relative z-10 text-center space-y-3">
+        <button
           type="button"
-          variant="outline"
-          disabled={guestLoading || isLoading}
           onClick={handleGuestLogin}
-          className="w-full h-10 rounded-xl border-[#d3dbd6] bg-[#f7faf8] hover:bg-[#eef5f1] text-[#176b5b] text-xs font-medium transition-all group"
+          disabled={guestLoading}
+          className="inline-flex items-center justify-center gap-1.5 text-xs text-[#526058] hover:text-[#176b5b] py-1.5 px-3 rounded-lg hover:bg-[#eceae3] transition-all font-medium cursor-pointer"
         >
           {guestLoading ? (
-            <>
-              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              正在加载示范作品...
-            </>
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
           ) : (
-            <div className="flex items-center justify-center gap-2">
-              <UserCheck className="w-4 h-4 text-[#176b5b]" />
-              <span>以「示范作者·沈砚」快速体验工作台</span>
-              <ArrowRight className="w-3.5 h-3.5 text-[#176b5b]/60 group-hover:translate-x-0.5 transition-transform" />
-            </div>
+            <Sparkles className="w-3.5 h-3.5 text-[#176b5b]" />
           )}
-        </Button>
+          <span>免登录体验 · 快速进入离线创作演示</span>
+        </button>
 
-        <p className="text-[11px] text-center text-[#959d98] mt-3">
-          本地优先架构 · 创作草稿将完整保留在当前浏览器中
-        </p>
+        <div className="flex items-center justify-center gap-4 text-[11px] text-[#97a19c]">
+          <span className="flex items-center gap-1">
+            <ShieldCheck className="w-3 h-3 text-[#176b5b]" />
+            HttpOnly 安全会话
+          </span>
+          <span>·</span>
+          <span>独立作品数据隔离</span>
+        </div>
       </div>
     </div>
   );
