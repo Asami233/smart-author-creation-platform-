@@ -2,8 +2,6 @@ import {
   backupDocumentSchema,
   type BackupDocument,
   type BackupImportResult,
-  type BackupSummary,
-  type BackupValidationResult,
   type StorageSummary,
   type TrashOverview,
 } from "@/contracts/data-safety";
@@ -40,7 +38,8 @@ export async function createFullBackup(ownerId: string): Promise<BackupDocument>
   const chapters = await all<JsonRow>(
     `SELECT c.id, c.work_id AS workId, c.volume_id AS volumeId, c.title, c.summary,
             c.content, c.plain_text AS plainText, c.word_count AS wordCount,
-            c.status, c.sort_order AS sortOrder, c.revision, c.deleted_at AS deletedAt,
+            c.status, c.sort_order AS sortOrder, c.revision,
+            c.content_format_version AS contentFormatVersion, c.deleted_at AS deletedAt,
             c.created_at AS createdAt, c.updated_at AS updatedAt
      FROM chapters c JOIN works w ON w.id = c.work_id
      WHERE w.owner_id = ? ORDER BY c.work_id, c.sort_order`,
@@ -137,17 +136,29 @@ export async function createFullBackup(ownerId: string): Promise<BackupDocument>
   });
 }
 
+export type BackupImportPlan = {
+  workIds: Map<string, string>;
+};
+
+export function createBackupImportPlan(backup: BackupDocument): BackupImportPlan {
+  return { workIds: new Map(backup.data.works.map((item) => [item.id, newId()])) };
+}
+
 const chunks = <T>(items: T[], size: number): T[][] => {
   const result: T[][] = [];
   for (let index = 0; index < items.length; index += size) result.push(items.slice(index, index + size));
   return result;
 };
 
-export async function importBackup(ownerId: string, payload: unknown): Promise<BackupImportResult> {
+export async function importBackup(
+  ownerId: string,
+  payload: unknown,
+  plan?: BackupImportPlan,
+): Promise<Pick<BackupImportResult, "importedWorkIds" | "summary" | "warnings">> {
   const backup = backupDocumentSchema.parse(payload);
   assertBackupReferences(backup);
 
-  const workIds = new Map(backup.data.works.map((item) => [item.id, newId()]));
+  const workIds = plan?.workIds ?? createBackupImportPlan(backup).workIds;
   const volumeIds = new Map(backup.data.volumes.map((item) => [item.id, newId()]));
   const chapterIds = new Map(backup.data.chapters.map((item) => [item.id, newId()]));
   const outlineIds = new Map(backup.data.outlines.map((item) => [item.id, newId()]));
@@ -179,12 +190,12 @@ export async function importBackup(ownerId: string, payload: unknown): Promise<B
     statements.push(statement(
       `INSERT INTO chapters
        (id, work_id, volume_id, title, summary, content, plain_text, word_count, status,
-        sort_order, revision, deleted_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        sort_order, revision, content_format_version, deleted_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       mapped(chapterIds, item.id), mapped(workIds, item.workId),
       item.volumeId ? mapped(volumeIds, item.volumeId) : null, item.title, item.summary,
       item.content, plainText, countWords(plainText), item.status, item.sortOrder,
-      item.revision, item.deletedAt, item.createdAt, item.updatedAt,
+      item.revision, item.contentFormatVersion, item.deletedAt, item.createdAt, item.updatedAt,
     ));
   }
   for (const item of backup.data.outlines) {

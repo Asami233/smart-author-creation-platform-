@@ -128,7 +128,7 @@ export async function restoreVersion(versionId: string, ownerId: string, expecte
   const statements = [
     statement(
       `UPDATE chapters SET content = ?, plain_text = ?, word_count = ?,
-       revision = revision + 1, last_save_id = ?, updated_at = ?
+       revision = revision + 1, last_save_id = ?, client_save_id = NULL, updated_at = ?
        WHERE ${guard.sql} RETURNING ${chapterReturningColumns}`,
       content,
       plainText,

@@ -4,15 +4,11 @@ import { useEffect, useState } from "react";
 import {
   Archive,
   BookOpen,
-  CheckCircle2,
   ChevronDown,
-  ChevronRight,
   ChevronUp,
   Edit3,
-  Layers,
   Loader2,
   Plus,
-  RefreshCw,
   Save,
   Trash2,
 } from "lucide-react";

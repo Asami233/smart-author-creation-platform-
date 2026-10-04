@@ -84,8 +84,6 @@ export function TrashDialog({ onRestored, trigger }: TrashDialogProps) {
     }
   };
 
-  const totalCount = trashData.chapters.length + trashData.works.length;
-
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>

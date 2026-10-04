@@ -1,7 +1,7 @@
 "use client";
 
 import { Suspense } from "react";
-import Link from "next/link";
+import { DocumentLink as Link } from "@/components/navigation/document-link";
 import { ArrowLeft, Loader2 } from "lucide-react";
 
 import { AuthCard } from "@/components/auth/auth-card";

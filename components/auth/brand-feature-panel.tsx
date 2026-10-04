@@ -51,9 +51,9 @@ export function BrandFeaturePanel() {
             <Zap className="w-4 h-4" />
           </div>
           <div>
-            <h3 className="text-sm font-semibold text-white">本地优先 · 毫秒级自动存盘</h3>
+            <h3 className="text-sm font-semibold text-white">本地优先 · 自动保存状态可见</h3>
             <p className="text-xs text-emerald-200/65 mt-0.5 leading-normal">
-              离线秒开，按键即存。即便突发断网或误关页面，心血字句依然完好无损。
+              编辑后自动保存到本地服务。保存失败时草稿仅在当前窗口，请勿刷新或关闭，恢复连接后可重试。
             </p>
           </div>
         </div>
@@ -77,7 +77,7 @@ export function BrandFeaturePanel() {
           <div>
             <h3 className="text-sm font-semibold text-white">大纲角色世界观 · 灵动贯通</h3>
             <p className="text-xs text-emerald-200/65 mt-0.5 leading-normal">
-              分卷章节树、人物小传与设定线索在写作侧栏一触即达，百万字伏线千里不卡顿。
+              分卷章节树、人物小传与设定线索集中管理，配合章节跳转与本章查找，梳理长篇故事。
             </p>
           </div>
         </div>

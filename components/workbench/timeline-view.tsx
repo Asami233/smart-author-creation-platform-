@@ -2,13 +2,9 @@
 
 import { useEffect, useState } from "react";
 import {
-  Calendar,
   Clock3,
-  GitCommit,
   Loader2,
-  Milestone,
   Plus,
-  Sparkles,
   Trash2,
   Users,
 } from "lucide-react";
@@ -268,7 +264,7 @@ export function TimelineView({ workId, characters = [], chapters = [] }: Timelin
           </div>
         ) : (
           <div className="relative pl-6 space-y-8 before:absolute before:left-2.5 before:top-3 before:bottom-3 before:w-0.5 before:bg-[#d8dad2]">
-            {events.map((evt, idx) => {
+            {events.map((evt) => {
               const relatedCh = chapters.find((c) => c.id === evt.relatedChapterId);
               const participantNames = (evt.participantIds || [])
                 .map((pid) => characters.find((c) => c.id === pid)?.name || pid);

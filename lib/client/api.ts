@@ -1,4 +1,5 @@
 // 前端数据契约层与客户端请求封装
+import { withRequestDeadline } from "./request-deadline";
 // 引用 Codex 定义的正式 contracts/** 类型，并提供优雅的默认演示数据与本地降级支持
 import type {
   Chapter,
@@ -361,10 +362,12 @@ export async function reorderVolumes(
 }
 
 export async function fetchChapter(chapterId: string): Promise<Chapter> {
-  const res = await fetch(`/api/chapters/${chapterId}`, { credentials: "include" });
-  if (!res.ok) throw new Error("获取章节内容失败");
-  const json = (await res.json()) as any;
-  return json.data;
+  return withRequestDeadline(async (signal) => {
+    const res = await fetch(`/api/chapters/${chapterId}`, { credentials: "include", signal });
+    if (!res.ok) throw new Error("获取章节内容失败");
+    const json = (await res.json()) as { data: Chapter };
+    return json.data;
+  });
 }
 
 export class ChapterConflictError extends Error {
@@ -377,22 +380,28 @@ export class ChapterConflictError extends Error {
 
 export async function saveChapter(
   chapterId: string,
-  input: { title?: string; content?: string; summary?: string; expectedRevision?: number },
+  input: { title?: string; content?: string; summary?: string; expectedRevision?: number; saveId?: string; preservePreviousVersion?: boolean },
 ): Promise<Chapter> {
-  const res = await fetch(`/api/chapters/${chapterId}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
-    body: JSON.stringify(input),
-  });
-  const json = (await res.json().catch(() => ({}))) as any;
-  if (!res.ok) {
-    if (res.status === 409) {
-      throw new ChapterConflictError(json.error?.message || "章节已被其他端更新，请刷新或选择覆盖");
+  return withRequestDeadline(async (signal) => {
+    const res = await fetch(`/api/chapters/${chapterId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify(input),
+      signal,
+    });
+    const json = (await res.json().catch((error) => {
+      if (res.ok) throw error; // Truncated success bodies must keep the draft pending.
+      return {};
+    })) as any;
+    if (!res.ok) {
+      if (res.status === 409) {
+        throw new ChapterConflictError(json.error?.message || "章节已被其他端更新，请刷新或选择覆盖");
+      }
+      throw new Error(json.error?.message || `保存章节失败 (${res.status})`);
     }
-    throw new Error(json.error?.message || `保存章节失败 (${res.status})`);
-  }
-  return json.data;
+    return json.data;
+  });
 }
 
 export async function createChapter(

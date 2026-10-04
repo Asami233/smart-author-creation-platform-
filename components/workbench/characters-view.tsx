@@ -3,17 +3,12 @@
 import { useEffect, useState } from "react";
 import {
   Compass,
-  Edit3,
-  Heart,
   Loader2,
   Plus,
-  Save,
   Shield,
   Sparkles,
-  Swords,
   Target,
   Trash2,
-  UserCheck,
   UsersRound,
 } from "lucide-react";
 
@@ -33,7 +28,6 @@ import {
   createKnowledgeItem,
   deleteKnowledgeItem,
   fetchKnowledgeList,
-  updateKnowledgeItem,
   type CharacterItem,
 } from "@/lib/client/api";
 

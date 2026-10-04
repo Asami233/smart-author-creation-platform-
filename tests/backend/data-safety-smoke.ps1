@@ -70,8 +70,20 @@ $minimalBackup = @{
         aiSettings = $null
     }
 }
-$imported = (Invoke-Json -Method POST -Path '/api/backup/import' -Body $minimalBackup).data
+$preflight = (Invoke-Json -Method POST -Path '/api/backup/preflight' -Body $minimalBackup).data
+if ($preflight.mode -ne 'merge-copy' -or -not $preflight.previewToken) { throw '备份预检没有返回恢复凭据' }
+$restoreRequest = @{
+    backup = $minimalBackup
+    previewToken = $preflight.previewToken
+    mode = 'merge-copy'
+    confirm = $true
+}
+$imported = (Invoke-Json -Method POST -Path '/api/backup/import' -Body $restoreRequest).data
 if ($imported.importedWorkIds.Count -ne 1) { throw '安全合并导入没有创建作品' }
+$retried = (Invoke-Json -Method POST -Path '/api/backup/import' -Body $restoreRequest).data
+if (-not $retried.alreadyImported -or $retried.importedWorkIds[0] -ne $imported.importedWorkIds[0]) {
+    throw '重复恢复没有返回幂等结果'
+}
 
 $storage = (Invoke-Json -Method GET -Path '/api/storage').data
 if ($storage.activeWorks -lt 2 -or $storage.activeChapters -lt 2) {

@@ -14,7 +14,6 @@ import {
   Loader2,
   Lock,
   Mail,
-  RefreshCw,
   ShieldCheck,
   Sparkles,
   User,
@@ -823,7 +822,7 @@ export function AuthCard() {
           ) : (
             <Sparkles className="w-3.5 h-3.5 text-[#176b5b]" />
           )}
-          <span>免登录体验 · 快速进入离线创作演示</span>
+          <span>免登录体验 · 进入本机访客工作台</span>
         </button>
 
         <div className="flex items-center justify-center gap-4 text-[11px] text-[#97a19c]">

@@ -41,6 +41,7 @@ type ChapterSummaryRow = {
   status: string;
   sort_order: number;
   revision: number;
+  content_format_version: number;
   created_at: string;
   updated_at: string;
 };
@@ -83,6 +84,7 @@ function mapChapterSummary(row: ChapterSummaryRow) {
     status: row.status,
     sortOrder: row.sort_order,
     revision: row.revision,
+    contentFormatVersion: row.content_format_version,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -189,7 +191,7 @@ async function workspaceSnapshot(work: WorkRow) {
     ),
     all<ChapterSummaryRow>(
       `SELECT id, work_id, volume_id, title, summary, word_count, status,
-              sort_order, revision, created_at, updated_at
+              sort_order, revision, content_format_version, created_at, updated_at
        FROM chapters
        WHERE work_id = ? AND deleted_at IS NULL
        ORDER BY COALESCE(volume_id, ''), sort_order, created_at`,

@@ -7,12 +7,10 @@ import {
   Globe2,
   Loader2,
   MapPin,
-  PackageOpen,
   Plus,
   Search,
   Sparkles,
   Sword,
-  Tag,
   Trash2,
 } from "lucide-react";
 
@@ -32,7 +30,6 @@ import {
   createKnowledgeItem,
   deleteKnowledgeItem,
   fetchKnowledgeList,
-  updateKnowledgeItem,
   type WorldItem,
 } from "@/lib/client/api";
 

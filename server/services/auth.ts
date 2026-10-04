@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull, ne, sql } from "drizzle-orm";
+import { and, desc, eq, gt, isNull, lte, ne, sql } from "drizzle-orm";
 import type {
   AuthSessionResult,
   AuthUser,
@@ -90,18 +90,9 @@ async function createChallenge(input: {
   await ensureChallengeCooldown(input.email, input.purpose);
   const code = randomVerificationCode();
   const now = new Date().toISOString();
-  await getDb()
-    .update(authChallenges)
-    .set({ consumedAt: now })
-    .where(
-      and(
-        eq(authChallenges.email, input.email),
-        eq(authChallenges.purpose, input.purpose),
-        isNull(authChallenges.consumedAt),
-      ),
-    );
+  const challengeId = crypto.randomUUID();
   await getDb().insert(authChallenges).values({
-    id: crypto.randomUUID(),
+    id: challengeId,
     email: input.email,
     purpose: input.purpose,
     codeHash: await hashChallenge(getAuthSecret(), input.purpose, input.email, code),
@@ -109,12 +100,33 @@ async function createChallenge(input: {
     expiresAt: isoAfter(CHALLENGE_SECONDS),
     createdAt: now,
   });
-  const delivery = await sendVerificationEmail({
-    request: input.request,
-    email: input.email,
-    code,
-    purpose: input.purpose,
-  });
+  let delivery: Awaited<ReturnType<typeof sendVerificationEmail>>;
+  try {
+    delivery = await sendVerificationEmail({
+      request: input.request,
+      email: input.email,
+      code,
+      purpose: input.purpose,
+    });
+    await getDb()
+      .update(authChallenges)
+      .set({ consumedAt: now })
+      .where(
+        and(
+          eq(authChallenges.email, input.email),
+          eq(authChallenges.purpose, input.purpose),
+          ne(authChallenges.id, challengeId),
+          isNull(authChallenges.consumedAt),
+        ),
+      );
+  } catch (error) {
+    try {
+      await getDb().delete(authChallenges).where(eq(authChallenges.id, challengeId));
+    } catch {
+      // Preserve the delivery/configuration failure; a later cleanup can expire the unusable challenge.
+    }
+    throw error;
+  }
   return {
     accepted: true,
     expiresInSeconds: CHALLENGE_SECONDS,
@@ -335,6 +347,43 @@ export async function logoutAll(request: Request) {
   const auth = await requireAuth(request);
   await getDb().update(authSessions).set({ revokedAt: new Date().toISOString() }).where(and(eq(authSessions.userId, auth.user.id), isNull(authSessions.revokedAt)));
   return { cookie: expiredSessionCookie(request), loggedOut: true as const };
+}
+
+export async function listAuthSessions(request: Request) {
+  const auth = await requireAuth(request);
+  const now = new Date().toISOString();
+  await getDb().delete(authSessions).where(and(
+    eq(authSessions.userId, auth.user.id),
+    lte(authSessions.expiresAt, now),
+  ));
+  const rows = await getDb().select({
+    id: authSessions.id,
+    createdAt: authSessions.createdAt,
+    lastSeenAt: authSessions.lastSeenAt,
+    expiresAt: authSessions.expiresAt,
+  }).from(authSessions).where(and(
+    eq(authSessions.userId, auth.user.id),
+    isNull(authSessions.revokedAt),
+    gt(authSessions.expiresAt, now),
+  )).orderBy(desc(authSessions.lastSeenAt));
+  return rows.map((row) => ({ ...row, current: row.id === auth.sessionId }));
+}
+
+export async function revokeAuthSession(request: Request, sessionId: string) {
+  const auth = await requireAuth(request);
+  if (sessionId === auth.sessionId) {
+    throw new AppError(409, "CANNOT_REVOKE_CURRENT_SESSION", "当前设备请使用退出登录，不能在设备列表中撤销");
+  }
+  const [target] = await getDb().select({ revokedAt: authSessions.revokedAt })
+    .from(authSessions)
+    .where(and(eq(authSessions.id, sessionId), eq(authSessions.userId, auth.user.id)))
+    .limit(1);
+  if (!target) throw new AppError(404, "SESSION_NOT_FOUND", "会话不存在或已被清理");
+  if (target.revokedAt) return { sessionId, revoked: true as const, alreadyRevoked: true };
+  await getDb().update(authSessions)
+    .set({ revokedAt: new Date().toISOString() })
+    .where(and(eq(authSessions.id, sessionId), eq(authSessions.userId, auth.user.id), isNull(authSessions.revokedAt)));
+  return { sessionId, revoked: true as const, alreadyRevoked: false };
 }
 
 export async function changePassword(

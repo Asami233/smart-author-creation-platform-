@@ -9,8 +9,6 @@
  * - Q02: 服务端删除章节的未保存草稿保留与恢复机制
  */
 
-import type { Chapter } from "@/contracts/types";
-
 export interface ChapterReorderSnapshot {
   chapterId: string;
   requestRevision: number;
@@ -188,7 +186,7 @@ export function normalizeRichText(html: string): string {
   if (!html) return "";
   let s = html.replace(/\r\n/g, "\n");
   // 标签名规范化：小写化标签并保留闭合斜杠
-  s = s.replace(/<(\/)?([A-Za-z0-9]+)(\s[^>]*)?>/g, (match, slash, tag, rest) => {
+  s = s.replace(/<(\/)?([A-Za-z0-9]+)(\s[^>]*)?>/g, (_match, slash, tag, rest) => {
     const prefix = slash ? "</" : "<";
     return rest ? `${prefix}${tag.toLowerCase()}${rest}>` : `${prefix}${tag.toLowerCase()}>`;
   });

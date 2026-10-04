@@ -37,6 +37,7 @@ export const backupChapterSchema = z.object({
   status: z.enum(["draft", "completed"]),
   sortOrder: z.number().int().min(0),
   revision: z.number().int().min(1),
+  contentFormatVersion: z.literal(1).default(1),
   deletedAt: timestamp.nullable(),
   createdAt: timestamp,
   updatedAt: timestamp,
@@ -171,10 +172,41 @@ export type BackupValidationResult = {
   summary: BackupSummary | null;
 };
 
+export const BACKUP_RESTORE_MODE = "merge-copy" as const;
+
+export const backupRestoreRequestSchema = z.object({
+  backup: backupDocumentSchema,
+  previewToken: z.string().min(40).max(2048),
+  mode: z.literal(BACKUP_RESTORE_MODE),
+  confirm: z.literal(true),
+}).strict();
+
+export type BackupTitleConflict = {
+  sourceWorkId: string;
+  sourceTitle: string;
+  existingWorks: Array<{ id: string; title: string; status: string }>;
+};
+
+export type BackupImportPreflightResult = {
+  valid: true;
+  mode: typeof BACKUP_RESTORE_MODE;
+  snapshotHash: string;
+  previewToken: string;
+  expiresAt: string;
+  summary: BackupSummary;
+  existingWorkCount: number;
+  titleConflicts: BackupTitleConflict[];
+  warnings: string[];
+  alreadyImported: boolean;
+};
+
 export type BackupImportResult = {
+  importId: string;
   importedWorkIds: string[];
   summary: BackupSummary;
   warnings: string[];
+  mode: typeof BACKUP_RESTORE_MODE;
+  alreadyImported: boolean;
 };
 
 export type TrashOverview = {

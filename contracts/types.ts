@@ -84,6 +84,8 @@ export type Chapter = {
   status: "draft" | "completed";
   sortOrder: number;
   revision: number;
+  /** Stored rich-text HTML format; existing chapters migrate to version 1. */
+  contentFormatVersion: number;
   createdAt: string;
   updatedAt: string;
 };

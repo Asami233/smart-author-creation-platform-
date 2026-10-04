@@ -1,8 +1,8 @@
 "use client";
 
-import Link from "next/link";
+import { DocumentLink as Link } from "@/components/navigation/document-link";
 import { useRouter } from "next/navigation";
-import { BookMarked, Feather, LogIn, LogOut, Settings, Sparkles, User, UserCheck } from "lucide-react";
+import { BookMarked, Feather, FolderInput, KeyRound, LogIn, LogOut, Settings, UserCheck } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -26,15 +26,16 @@ export function UserMenu() {
 
   if (!isAuthenticated || !user) {
     return (
-      <Link href="/login">
         <Button
+          asChild
           size="sm"
           className="h-8 px-3 rounded-lg bg-[#176b5b] hover:bg-[#13594b] text-white text-xs font-medium gap-1.5 shadow-xs"
         >
-          <LogIn className="w-3.5 h-3.5" />
-          <span>登录 / 注册</span>
+          <Link href="/login">
+            <LogIn className="w-3.5 h-3.5" />
+            <span>登录 / 注册</span>
+          </Link>
         </Button>
-      </Link>
     );
   }
 
@@ -96,6 +97,20 @@ export function UserMenu() {
         >
           <Settings className="w-3.5 h-3.5 mr-2 text-[#176b5b]" />
           <span>作者主页与设置</span>
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onClick={() => router.push("/claim")}
+          className="text-xs text-[#48534e] hover:text-[#176b5b] hover:bg-[#eef3f0] cursor-pointer rounded-lg py-2"
+        >
+          <FolderInput className="w-3.5 h-3.5 mr-2 text-[#176b5b]" />
+          <span>认领本机访客作品</span>
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onClick={() => router.push("/sessions")}
+          className="text-xs text-[#48534e] hover:text-[#176b5b] hover:bg-[#eef3f0] cursor-pointer rounded-lg py-2"
+        >
+          <KeyRound className="w-3.5 h-3.5 mr-2 text-[#176b5b]" />
+          <span>登录设备与会话</span>
         </DropdownMenuItem>
         <DropdownMenuItem
           onClick={() => router.push("/login")}

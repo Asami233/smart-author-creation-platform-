@@ -29,6 +29,20 @@
       "when": 1790048036603,
       "tag": "0003_clammy_bullseye",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1790488909658,
+      "tag": "0004_serious_puck",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1790512783051,
+      "tag": "0005_brave_otto_octavius",
+      "breakpoints": true
     }
   ]
 }

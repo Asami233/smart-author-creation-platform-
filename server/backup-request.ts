@@ -2,14 +2,14 @@ import { AppError } from "./errors";
 
 export const MAX_BACKUP_BYTES = 25 * 1024 * 1024;
 
-export async function readBackupJson(request: Request): Promise<unknown> {
+export async function readBackupJson(request: Request, maxBytes = MAX_BACKUP_BYTES): Promise<unknown> {
   const declaredLength = Number(request.headers.get("content-length") ?? 0);
-  if (declaredLength > MAX_BACKUP_BYTES) {
+  if (declaredLength > maxBytes) {
     throw new AppError(413, "BACKUP_TOO_LARGE", "备份文件不能超过 25 MB");
   }
 
   const text = await request.text();
-  if (new TextEncoder().encode(text).byteLength > MAX_BACKUP_BYTES) {
+  if (new TextEncoder().encode(text).byteLength > maxBytes) {
     throw new AppError(413, "BACKUP_TOO_LARGE", "备份文件不能超过 25 MB");
   }
 

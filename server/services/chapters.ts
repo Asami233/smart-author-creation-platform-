@@ -1,6 +1,7 @@
 import type { CreateChapterInput, ReorderChaptersInput, UpdateChapterInput } from "@/contracts";
 import { all, batch, first, statement } from "@/server/db";
 import { chapterReturningColumns, chapterWriteGuard } from "@/server/chapter-write";
+import { isMatchingSaveReplay } from "@/server/chapter-save";
 import { conflict, notFound } from "@/server/errors";
 import { countWords, htmlToPlainText, isoNow, localDateKey, newId } from "@/server/text";
 import { assertWorkOwned } from "./works";
@@ -17,6 +18,9 @@ export type ChapterRow = {
   status: string;
   sort_order: number;
   revision: number;
+  last_save_id?: string | null;
+  client_save_id?: string | null;
+  content_format_version: number;
   created_at: string;
   updated_at: string;
 };
@@ -33,6 +37,7 @@ export function mapChapter(row: ChapterRow) {
     status: row.status,
     sortOrder: row.sort_order,
     revision: row.revision,
+    contentFormatVersion: row.content_format_version,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -46,7 +51,8 @@ export async function getChapter(chapterId: string, ownerId: string): Promise<Re
 export async function getChapterRow(chapterId: string, ownerId: string): Promise<ChapterRow> {
   const row = await first<ChapterRow>(
     `SELECT c.id, c.work_id, c.volume_id, c.title, c.summary, c.content, c.plain_text,
-            c.word_count, c.status, c.sort_order, c.revision, c.created_at, c.updated_at
+            c.word_count, c.status, c.sort_order, c.revision, c.last_save_id,
+            c.client_save_id, c.content_format_version, c.created_at, c.updated_at
      FROM chapters c JOIN works w ON w.id = c.work_id
      WHERE c.id = ? AND c.deleted_at IS NULL AND w.owner_id = ? AND w.status != 'archived'`,
     chapterId,
@@ -66,7 +72,7 @@ export async function listChapters(workId: string, ownerId: string, includeConte
   await assertWorkOwned(workId, ownerId);
   const rows = await all<ChapterRow>(
     `SELECT id, work_id, volume_id, title, summary, ${includeContent ? "content, plain_text," : "'' AS content, '' AS plain_text,"}
-            word_count, status, sort_order, revision, created_at, updated_at
+            word_count, status, sort_order, revision, content_format_version, created_at, updated_at
      FROM chapters WHERE work_id = ? AND deleted_at IS NULL
      ORDER BY COALESCE(volume_id, ''), sort_order, created_at`,
     workId,
@@ -96,8 +102,8 @@ export async function createChapter(workId: string, ownerId: string, input: Crea
     statement(
       `INSERT INTO chapters
        (id, work_id, volume_id, title, summary, content, plain_text, word_count,
-        status, sort_order, revision, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+        status, sort_order, revision, content_format_version, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?)`,
       id,
       workId,
       volumeId,
@@ -129,6 +135,10 @@ async function shouldSnapshot(chapter: ChapterRow, nextWordCount: number): Promi
 
 export async function updateChapter(chapterId: string, ownerId: string, input: UpdateChapterInput) {
   const current = await getChapterRow(chapterId, ownerId);
+  if (input.saveId && current.client_save_id === input.saveId) {
+    if (isMatchingSaveReplay(current, input)) return mapChapter(current);
+    conflict("保存请求 ID 已用于其他内容，请重新获取章节后再保存");
+  }
   if (input.expectedRevision !== undefined && input.expectedRevision !== current.revision) {
     conflict("章节已在其他位置更新，请刷新后重试", {
       expectedRevision: input.expectedRevision,
@@ -145,7 +155,7 @@ export async function updateChapter(chapterId: string, ownerId: string, input: U
   const saveId = newId();
   const statements: D1PreparedStatement[] = [];
 
-  if (contentChanged && (await shouldSnapshot(current, nextWordCount))) {
+  if (contentChanged && (input.preservePreviousVersion || await shouldSnapshot(current, nextWordCount))) {
     statements.push(
       statement(
         `INSERT INTO chapter_versions
@@ -165,8 +175,8 @@ export async function updateChapter(chapterId: string, ownerId: string, input: U
     );
   }
 
-  const columns = ["updated_at = ?", "last_save_id = ?", "revision = revision + 1"];
-  const values: unknown[] = [now, saveId];
+  const columns = ["updated_at = ?", "last_save_id = ?", "client_save_id = ?", "revision = revision + 1"];
+  const values: unknown[] = [now, saveId, input.saveId ?? null];
   const add = (column: string, value: unknown) => {
     columns.push(`${column} = ?`);
     values.push(value);
@@ -229,6 +239,10 @@ export async function updateChapter(chapterId: string, ownerId: string, input: U
   const updateResult = results[0];
   const updated = updateResult?.results[0] as ChapterRow | undefined;
   if (!updated) {
+    if (input.saveId) {
+      const latest = await getChapterRow(chapterId, ownerId);
+      if (latest.client_save_id === input.saveId && isMatchingSaveReplay(latest, input)) return mapChapter(latest);
+    }
     conflict("章节更新发生冲突，请刷新后重试");
   }
   return mapChapter(updated);

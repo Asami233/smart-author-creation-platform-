@@ -1,41 +1,43 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { type SVGProps, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   Award,
   Check,
-  Cpu,
   Download,
   Feather,
-  FileText,
   HardDrive,
-  KeyRound,
-  Lock,
   Mail,
-  Medal,
   Phone,
-  RotateCcw,
   Save,
-  Settings,
   ShieldCheck,
   Sliders,
   Sparkles,
   Trash2,
-  Type,
   User,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useAuth } from "@/lib/client/auth";
+import { AccountDeletionDialog } from "@/components/account/account-deletion-dialog";
+import { BackupRestoreDialog } from "@/components/account/backup-restore-dialog";
+import { useAuth, type AuthorUser } from "@/lib/client/auth";
 
 type ProfileTab = "profile" | "editor" | "ai" | "storage";
 
 export function ProfileView() {
   const { user } = useAuth();
+  return <ProfileViewContent key={user?.id ?? "guest"} user={user} />;
+}
+
+function ProfileViewContent({ user }: { user: AuthorUser | null }) {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<ProfileTab>("profile");
   const [isSaved, setIsSaved] = useState(false);
+  const [backupState, setBackupState] = useState<"idle" | "downloading" | "done" | "error">("idle");
+  const [backupError, setBackupError] = useState<string | null>(null);
 
   // 1. 作者档案状态
   const [penName, setPenName] = useState(user?.penName || "沈砚");
@@ -46,49 +48,45 @@ export function ProfileView() {
 
   // 2. 写作习惯与编辑器偏好状态
   const [fontFamily, setFontFamily] = useState<"serif" | "sans">("serif");
-  const [fontSize, setFontSize] = useState<"sm" | "md" | "lg">("md");
-  const [lineHeight, setLineHeight] = useState<"compact" | "normal" | "loose">("normal");
   const [autoSaveInterval, setAutoSaveInterval] = useState("650");
   const [paragraphIndent, setParagraphIndent] = useState(true);
 
   // 3. AI 模型推演偏好状态
   const [aiProvider, setAiProvider] = useState("deepseek");
   const [aiTemperature, setAiTemperature] = useState(0.7);
-  const [aiMaxTokens, setAiMaxTokens] = useState("1500");
   const [aiPromptStyle, setAiPromptStyle] = useState("克制留白，注重环境烘托与人物微动作");
 
   // 4. 数据与缓存
-  const [storageUsage, setStorageUsage] = useState("1.85 MB");
-
-  useEffect(() => {
-    if (user?.penName) setPenName(user.penName);
-    if (user?.bio) setBio(user.bio);
-  }, [user]);
+  const storageUsage = "1.85 MB";
 
   const handleSave = () => {
     setIsSaved(true);
     setTimeout(() => setIsSaved(false), 2500);
   };
 
-  const handleExportFullBackup = () => {
-    const backupData = {
-      version: "1.0",
-      exportTime: new Date().toISOString(),
-      author: { penName, bio, email },
-      settings: { fontFamily, fontSize, lineHeight, autoSaveInterval },
-      scope: "all-works",
-    };
-    const blob = new Blob([JSON.stringify(backupData, null, 2)], {
-      type: "application/json",
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${penName}_全书创作备份_${new Date().toLocaleDateString("zh-CN")}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+  const handleExportFullBackup = async () => {
+    setBackupState("downloading");
+    setBackupError(null);
+    try {
+      const response = await fetch("/api/account/export", { credentials: "include", cache: "no-store" });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null) as { error?: { message?: string } } | null;
+        throw new Error(payload?.error?.message ?? `导出失败（${response.status}）`);
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `smart-author-account-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 30_000);
+      setBackupState("done");
+    } catch (cause) {
+      setBackupState("error");
+      setBackupError(cause instanceof Error ? cause.message : "账号数据导出失败");
+    }
   };
 
   return (
@@ -485,16 +483,20 @@ export function ProfileView() {
 
             <div className="space-y-3">
               <Button
-                onClick={handleExportFullBackup}
+                onClick={() => void handleExportFullBackup()}
+                disabled={backupState === "downloading"}
                 variant="outline"
                 className="w-full h-11 rounded-xl border-[#cfd9d4] bg-[#f7faf8] hover:bg-[#eef5f1] text-[#176b5b] text-xs font-medium justify-between px-4"
               >
                 <div className="flex items-center gap-2">
                   <Download className="w-4 h-4" />
-                  <span>导出全库完整档案备份 (.json)</span>
+                  <span>{backupState === "downloading" ? "正在准备真实账号备份…" : "导出账号与作品完整备份 (.json)"}</span>
                 </div>
-                <span className="text-[11px] text-[#7f8883]">含所有大纲与设定</span>
+                <span className="text-[11px] text-[#7f8883]">不含密码、会话和 API 密钥</span>
               </Button>
+              {backupState === "done" && <p className="text-[11px] text-[#176b5b]">备份下载已发起，请确认文件已安全保存。</p>}
+              {backupError && <p role="alert" className="text-[11px] text-red-700">{backupError}</p>}
+              <BackupRestoreDialog />
             </div>
 
             <div className="pt-4 border-t border-[#f0eee8] flex items-center justify-between">
@@ -508,7 +510,7 @@ export function ProfileView() {
                 onClick={() => {
                   if (confirm("确定要清空本地演示数据吗？清空后将无法找回。")) {
                     localStorage.clear();
-                    window.location.href = "/";
+                    router.replace("/");
                   }
                 }}
                 className="text-xs text-red-600 hover:text-red-700 hover:bg-red-50 h-8"
@@ -517,6 +519,18 @@ export function ProfileView() {
                 重置演示数据
               </Button>
             </div>
+
+            {user && !user.id.startsWith("guest-") && (
+              <div className="rounded-xl border border-red-200 bg-red-50/40 p-4 flex items-center justify-between gap-4">
+                <div>
+                  <h5 className="text-xs font-bold text-red-800">永久删除账号</h5>
+                  <p className="text-[11px] leading-5 text-red-700/80">
+                    会立即删除账号、全部作品和登录会话。请先导出上方完整备份。
+                  </p>
+                </div>
+                <AccountDeletionDialog email={user.email} />
+              </div>
+            )}
           </div>
         )}
       </main>
@@ -524,7 +538,7 @@ export function ProfileView() {
   );
 }
 
-function TrophyIcon(props: any) {
+function TrophyIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg
       {...props}

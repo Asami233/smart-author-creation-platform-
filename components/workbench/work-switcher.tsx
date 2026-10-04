@@ -1,7 +1,6 @@
 "use client";
 
-import React from "react";
-import { BookOpen, Check, ChevronDown, Plus, Sparkles, Trash2 } from "lucide-react";
+import { BookOpen, Check, ChevronDown, Plus, Trash2 } from "lucide-react";
 import type { Work } from "@/lib/client/api";
 import {
   DropdownMenu,

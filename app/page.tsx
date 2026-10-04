@@ -1,6 +1,17 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { EditorContent, useEditor } from "@tiptap/react";
+import StarterKit from "@tiptap/starter-kit";
+import { EditorSearch } from "@/components/workbench/editor-search";
+import { ChapterJumpDialog } from "@/components/workbench/chapter-jump-dialog";
+import { EditorDiagnostics } from "@/components/workbench/editor-diagnostics";
+import { editorDiagnostics } from "@/lib/client/editor-diagnostics";
+import { getEditorShortcut } from "@/lib/client/editor-keyboard";
+import { chapterPasteText, copyEditorText } from "@/lib/client/editor-clipboard";
+import { prepareOverwriteAttempt, type OverwriteAttempt } from "@/lib/client/overwrite-attempt";
+import { canCommitChapterJump } from "@/lib/client/chapter-navigation";
+import { countChapterWords, createChapterTextAnalyzer, plainChapterText } from "@/lib/client/chapter-text";
 import {
   Archive,
   AlertTriangle,
@@ -21,6 +32,7 @@ import {
   FileDown,
   FilePlus2,
   FolderPlus,
+  Focus,
   Globe2,
   Heading2,
   Italic,
@@ -86,10 +98,7 @@ import {
   fetchWorkspace,
   switchActiveWorkspace,
   fetchWorkDetails,
-  createWork,
   archiveWork,
-  createVolume,
-  updateVolume,
   deleteVolume,
   reorderVolumes,
   reorderChapters,
@@ -110,18 +119,13 @@ import {
   type WorldItem,
   type ChapterLinkItem,
   type WorkStats,
-  type WritingDayStats,
 } from "@/lib/client/api";
 import { generateAiContentStream } from "@/lib/client/ai-stream";
 import { planAiContext, type AiAction, type AiContextBudget, type AiGenerationInput } from "@/contracts";
 import {
   type ChapterReorderSnapshot,
-  calculateChapterOrderDelta,
   verifyChapterReorderRevision,
-  canPerformStructuralAction,
-  canPerformSave,
   categorizeMutationError,
-  isDraftContentEquivalent,
   isDraftPendingSaveEquivalent,
   canApplyResyncResponse,
   canSwitchWork,
@@ -139,27 +143,11 @@ type LocalChapter = {
   sortOrder?: number;
 };
 
-const projectNav = [
-  { label: "正文", icon: BookOpen, active: true },
-  { label: "大纲", icon: Archive },
-  { label: "角色", icon: UsersRound },
-  { label: "设定", icon: Globe2 },
-  { label: "时间线", icon: Clock3 },
-];
-
 const aiActions = [
   { id: "continue", label: "续写这一段", icon: Sparkles },
   { id: "polish", label: "润色选中内容", icon: WandSparkles },
   { id: "brainstorm", label: "推演后续情节", icon: BrainCircuit },
 ];
-
-function plainText(html: string) {
-  return html
-    .replace(/<[^>]*>/g, "")
-    .replace(/&nbsp;/g, " ")
-    .replace(/\s+/g, "")
-    .trim();
-}
 
 const TODAY_WORDS_STORAGE_KEY = "smart-author-today-words";
 const DAILY_GOAL_STORAGE_KEY = "smart-author-daily-goal";
@@ -216,22 +204,15 @@ export default function Home() {
   const [isCreateWorkOpen, setIsCreateWorkOpen] = useState(false);
   const [isAiSettingsOpen, setIsAiSettingsOpen] = useState(false);
   const [isLoadingWorkspace, setIsLoadingWorkspace] = useState(true);
-  const [saveState, setSaveState] = useState<"saved" | "saving" | "conflict" | "error">("saved");
+  const [saveState, setSaveStateValue] = useState<"saved" | "saving" | "conflict" | "error">("saved");
   const [isCreatingChapter, setIsCreatingChapter] = useState(false);
   const isCreatingChapterRef = useRef(false);
   const [conflictChapterId, setConflictChapterId] = useState<string | null>(null);
-  const [conflictServerChapter, setConflictServerChapter] = useState<{
-    title: string;
-    content: string;
-    revision: number;
-  } | null>(null);
-
   // 知识库实体状态（当前作品真实设定）
   const [charactersList, setCharactersList] = useState<CharacterItem[]>([]);
   const [outlinesList, setOutlinesList] = useState<OutlineItem[]>([]);
   const [worldList, setWorldList] = useState<WorldItem[]>([]);
   const [timelineList, setTimelineList] = useState<any[]>([]);
-  const [knowledgeError, setKnowledgeError] = useState<string | null>(null);
 
   // 章节与设定关联状态
   const [chapterLinks, setChapterLinks] = useState<ChapterLinkItem[]>([]);
@@ -243,6 +224,14 @@ export default function Home() {
 
   // 右侧辅助检查面板折叠状态（响应式自适应）
   const [isInspectorCollapsed, setIsInspectorCollapsed] = useState(false);
+  const [isFindOpen, setIsFindOpen] = useState(false);
+  const [isFocusMode, setIsFocusMode] = useState(false);
+  const [isChapterJumpOpen, setIsChapterJumpOpen] = useState(false);
+  const [chapterJumpError, setChapterJumpError] = useState<string | null>(null);
+  const chapterJumpBusyRef = useRef(false);
+  const [isResolvingConflict, setIsResolvingConflict] = useState(false);
+  const resolvingConflictRef = useRef(false);
+  const [conflictAction, setConflictAction] = useState<"pull" | "overwrite" | null>(null);
 
   const [rightTab, setRightTab] = useState("ai");
   const [aiPrompt, setAiPrompt] = useState("保持克制沉稳的语气，续写下一段场景。");
@@ -255,18 +244,74 @@ export default function Home() {
   const [lastAiAction, setLastAiAction] = useState<AiAction>("continue");
   const aiAbortRef = useRef<AbortController | null>(null);
   const aiRunIdRef = useRef(0);
-  const [copiedToast, setCopiedToast] = useState(false);
+  const [copiedToast, setCopiedToast] = useState<"draft" | "ai" | null>(null);
   const [includeCurrentChapter, setIncludeCurrentChapter] = useState(true);
   const [includeOutline, setIncludeOutline] = useState(true);
   const [includeCharacters, setIncludeCharacters] = useState(false);
   const [includeWorld, setIncludeWorld] = useState(false);
   const [includeTimeline, setIncludeTimeline] = useState(false);
-  const editorRef = useRef<HTMLDivElement>(null);
+  const onEditorUpdateRef = useRef<() => void>(() => {});
+  const [analyzeChapterText] = useState(() => createChapterTextAnalyzer());
+  const tiptap = useEditor({
+    extensions: [StarterKit],
+    content: chapters.find((item) => item.id === selectedId)?.content || "<p></p>",
+    immediatelyRender: false,
+    editorProps: {
+      attributes: { class: "rich-editor", "aria-label": "章节正文编辑器" },
+      handlePaste(view, event) {
+        // The browser never inserts clipboard HTML into a novel chapter.
+        const text = chapterPasteText(event.clipboardData);
+        if (text === null) return true;
+        view.dispatch(view.state.tr.insertText(text));
+        return true;
+      },
+    },
+    onUpdate: () => editorDiagnostics.measure("update", () => onEditorUpdateRef.current()),
+  }, [selectedId]);
+  const tiptapRef = useRef(tiptap);
+  useEffect(() => {
+    tiptapRef.current = tiptap;
+  }, [tiptap]);
+  useEffect(() => {
+    function handleWritingShortcut(event: KeyboardEvent) {
+      if (activeView !== "writing" || !selectedId ||
+          document.querySelector('[role="dialog"]')) return;
+      const shortcut = getEditorShortcut(event);
+      if (shortcut === "jump") {
+        event.preventDefault(); setIsChapterJumpOpen(true);
+      } else if (shortcut === "find") {
+        event.preventDefault();
+        setIsFindOpen(true);
+        if (isFindOpen) document.getElementById("editor-find-query")?.focus();
+      } else if (shortcut === "escape") {
+        if (isFindOpen) {
+          event.preventDefault(); setIsFindOpen(false); tiptapRef.current?.commands.focus();
+        } else if (isFocusMode) {
+          event.preventDefault(); setIsFocusMode(false);
+        }
+      }
+    }
+    // Handle workbench commands before the editor consumes the same key.
+    window.addEventListener("keydown", handleWritingShortcut, true);
+    return () => window.removeEventListener("keydown", handleWritingShortcut, true);
+  }, [activeView, selectedId, isFindOpen, isFocusMode]);
   const paperScrollRef = useRef<HTMLDivElement>(null);
   const [scrollProgress, setScrollProgress] = useState(0);
   const aiCurrentSourceKey = `${activeWorkId ?? ""}:${selectedId ?? ""}`;
   const isAiGeneratingHere = isGenerating && aiSourceKey === aiCurrentSourceKey;
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function readEditorHtml() {
+    const editor = tiptapRef.current;
+    return editor && !editor.isDestroyed ? editorDiagnostics.measure("serialize", () => editor.getHTML()) : "";
+  }
+
+  function replaceEditorHtml(html: string) {
+    const editor = tiptapRef.current;
+    if (editor && !editor.isDestroyed) {
+      editor.commands.setContent(html || "<p></p>", { emitUpdate: false });
+    }
+  }
 
   // 串行保存与状态引用追踪（保证保存执行时不依赖过期快照）
   const chaptersRef = useRef(chapters);
@@ -274,6 +319,10 @@ export default function Home() {
 
   const saveStateRef = useRef<"saved" | "saving" | "conflict" | "error">(saveState);
   saveStateRef.current = saveState;
+  const setSaveState = useCallback((next: typeof saveState) => {
+    saveStateRef.current = next;
+    setSaveStateValue(next);
+  }, []);
 
   const activeSavePromiseRef = useRef<Promise<boolean> | null>(null);
 
@@ -318,10 +367,13 @@ export default function Home() {
 
   type PendingSave = {
     chapterId: string;
+    saveId: string;
     title?: string;
     content?: string;
   };
   const pendingSaveRef = useRef<PendingSave | null>(null);
+  const uncertainOverwriteRef = useRef<OverwriteAttempt | null>(null);
+  const originalVersionPreservedRef = useRef<Set<string>>(new Set());
   const currentEditorChapterIdRef = useRef<string | null>(selectedId);
 
   // SSR 与初次水合使用确定性的初始值，挂载后通过 useEffect 安全同步 localStorage
@@ -341,18 +393,17 @@ export default function Home() {
       content: "<p></p>",
       status: "draft" as const,
     };
+  const selectedMetrics = analyzeChapterText(selected.content || "");
   const getChapterWordCount = (chapter: LocalChapter) => {
-    if (chapter.id === selectedId) {
-      return plainText(chapter.content).length;
-    }
-    return chapter.wordCount ?? (chapter.content ? plainText(chapter.content).length : 0);
+    if (chapter.id === selectedId) return selectedMetrics.wordCount;
+    return chapter.wordCount ?? (chapter.content ? countChapterWords(chapter.content) : 0);
   };
   const currentVolume = volumes.find((v) => v.id === selected.volumeId) || volumes[0] || null;
-  const chapterWords = plainText(selected.content).length;
+  const chapterWords = selectedMetrics.wordCount;
   const totalWords = chapters.reduce((sum, chapter) => sum + getChapterWordCount(chapter), 0);
 
   const aiContextPayload = useMemo<AiGenerationInput["context"]>(() => {
-    const currentChapterText = plainText(selected.content || "");
+    const currentChapterText = selectedMetrics.text;
     return {
       chapters: includeCurrentChapter && currentChapterText
         ? [{ id: selected.id, title: selected.title, content: currentChapterText.slice(-3000) }] : [],
@@ -366,7 +417,7 @@ export default function Home() {
         ? timelineList.slice(0, 2).map((item) => ({ title: item.title, description: item.description || "" })) : [],
     };
   }, [includeCurrentChapter, includeOutline, includeCharacters, includeWorld, includeTimeline,
-    selected.id, selected.title, selected.content, outlinesList, charactersList, worldList, timelineList]);
+    selected.id, selected.title, selectedMetrics.text, outlinesList, charactersList, worldList, timelineList]);
   const aiPreviewBudget = useMemo(() => planAiContext({
     action: "continue", instruction: aiPrompt || " ", selectedText: "", context: aiContextPayload,
     temperature: 0.7, maxTokens: 2000,
@@ -469,6 +520,7 @@ export default function Home() {
 
   // 串行保存处理器：无论网络如何延迟或用户持续输入，保证保存请求单线串行执行，杜绝过期响应覆盖新草稿与 409
   const performSave = useCallback(async (): Promise<boolean> => {
+    if (resolvingConflictRef.current) return false;
     // 关键 C02：若当前已有在途分卷/章节排序请求，等待其完成并同步好版本号，防止并发写入导致版本冲突 409
     if (activeReorderPromiseRef.current) {
       try {
@@ -524,6 +576,7 @@ export default function Home() {
                 newerPending !== null && newerPending.chapterId === currentPending.chapterId;
               const effectivePending: PendingSave = {
                 chapterId: currentPending.chapterId,
+                saveId: hasNewerSameChapterInput ? newerPending.saveId : currentPending.saveId,
                 title: hasNewerSameChapterInput ? (newerPending.title ?? currentPending.title) : currentPending.title,
                 content: hasNewerSameChapterInput ? (newerPending.content ?? currentPending.content) : currentPending.content,
               };
@@ -553,11 +606,6 @@ export default function Home() {
                 );
                 setSaveState("conflict");
                 setConflictChapterId(currentPending.chapterId);
-                setConflictServerChapter({
-                  title: latest.title,
-                  content: latest.content || "<p></p>",
-                  revision: latest.revision,
-                });
                 // 关键修复：保留合并后的最新输入 effectivePending，绝不被旧快照 currentPending 覆盖！
                 pendingSaveRef.current = newerPending && !hasNewerSameChapterInput ? newerPending : effectivePending;
                 return false;
@@ -570,6 +618,7 @@ export default function Home() {
                 newerPending !== null && newerPending.chapterId === currentPending.chapterId;
               const effectivePending: PendingSave = {
                 chapterId: currentPending.chapterId,
+                saveId: hasNewerSameChapterInput ? newerPending.saveId : currentPending.saveId,
                 title: hasNewerSameChapterInput ? (newerPending.title ?? currentPending.title) : currentPending.title,
                 content: hasNewerSameChapterInput ? (newerPending.content ?? currentPending.content) : currentPending.content,
               };
@@ -594,11 +643,6 @@ export default function Home() {
             try {
               const latest = await fetchChapter(currentPending.chapterId);
               catalogRevisionsRef.current[currentPending.chapterId] = latest.revision;
-              setConflictServerChapter({
-                title: latest.title,
-                content: latest.content,
-                revision: latest.revision,
-              });
             } catch {}
             return false;
           }
@@ -609,17 +653,24 @@ export default function Home() {
             return false;
           }
 
-          const payload: { title?: string; content?: string; expectedRevision: number } = {
+          const payload: { title?: string; content?: string; expectedRevision: number; saveId: string; preservePreviousVersion?: boolean } = {
             expectedRevision,
+            saveId: currentPending.saveId,
           };
           if (currentPending.title !== undefined) payload.title = currentPending.title;
-          if (currentPending.content !== undefined) payload.content = currentPending.content;
+          if (currentPending.content !== undefined) {
+            payload.content = currentPending.content;
+            if (!originalVersionPreservedRef.current.has(currentPending.chapterId)) {
+              payload.preservePreviousVersion = true;
+            }
+          }
 
           const updated = await saveChapter(currentPending.chapterId, payload);
 
           // 正文保存成功，权威推进正文基线与目录观察修订号
           contentBaseRevisionsRef.current[currentPending.chapterId] = updated.revision;
           catalogRevisionsRef.current[currentPending.chapterId] = updated.revision;
+          if (payload.preservePreviousVersion) originalVersionPreservedRef.current.add(currentPending.chapterId);
 
           // 更新章节状态：若在在途网络请求期间用户已键入更新内容，保留最新草稿，决不让旧响应覆盖新输入
           const inFlightPending = pendingSaveRef.current as PendingSave | null;
@@ -647,7 +698,6 @@ export default function Home() {
 
           setSaveState("saved");
           setConflictChapterId(null);
-          setConflictServerChapter(null);
 
           // 保存成功后触发服务端权威统计刷新
           if (activeWorkIdRef.current && loadWorkStatsRef.current) {
@@ -662,11 +712,6 @@ export default function Home() {
               const latest = await fetchChapter(currentPending.chapterId);
               // 关键 R01: 仅更新目录观察版本，绝不推进未决草稿的 contentBaseRevisionsRef!
               catalogRevisionsRef.current[currentPending.chapterId] = latest.revision;
-              setConflictServerChapter({
-                title: latest.title,
-                content: latest.content,
-                revision: latest.revision,
-              });
             } catch (fetchErr) {
               console.error("拉取冲突章节服务器版本失败:", fetchErr);
             }
@@ -680,6 +725,7 @@ export default function Home() {
           } else if (existingPending.chapterId === currentPending.chapterId) {
             pendingSaveRef.current = {
               chapterId: currentPending.chapterId,
+              saveId: existingPending.saveId,
               title: existingPending.title !== undefined ? existingPending.title : currentPending.title,
               content: existingPending.content !== undefined ? existingPending.content : currentPending.content,
             };
@@ -714,7 +760,7 @@ export default function Home() {
   // 快捷键保存与离开防丢稿保护（覆盖在途保存中、未保存防抖与冲突状态）
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+      if (getEditorShortcut(e) === "save") {
         e.preventDefault();
         flushPendingSave();
       }
@@ -749,7 +795,6 @@ export default function Home() {
     setOutlinesList([]);
     setWorldList([]);
     setTimelineList([]);
-    setKnowledgeError(null);
 
     try {
       const [c, o, w, t] = await Promise.allSettled([
@@ -764,19 +809,13 @@ export default function Home() {
         return;
       }
 
-      let hasError = false;
-      if (c.status === "fulfilled") setCharactersList(c.value); else hasError = true;
-      if (o.status === "fulfilled") setOutlinesList(o.value); else hasError = true;
-      if (w.status === "fulfilled") setWorldList(w.value); else hasError = true;
-      if (t.status === "fulfilled") setTimelineList(t.value); else hasError = true;
-
-      if (hasError) {
-        setKnowledgeError("部分设定未能成功加载，可点击右上角刷新重新获取。");
-      }
+      if (c.status === "fulfilled") setCharactersList(c.value);
+      if (o.status === "fulfilled") setOutlinesList(o.value);
+      if (w.status === "fulfilled") setWorldList(w.value);
+      if (t.status === "fulfilled") setTimelineList(t.value);
     } catch (err) {
       if (reqId === knowledgeRequestIdRef.current) {
         console.error("加载设定数据失败:", err);
-        setKnowledgeError("加载作品设定库失败，请稍后重试。");
       }
     }
   }, []);
@@ -802,9 +841,7 @@ export default function Home() {
         setWorldList([]);
         setTimelineList([]);
         setWorkStats(null);
-        if (editorRef.current) {
-          editorRef.current.innerHTML = "<p></p>";
-        }
+        replaceEditorHtml("<p></p>");
         return;
       }
 
@@ -855,9 +892,7 @@ export default function Home() {
       if (chapterList.length === 0) {
         setChapters([]);
         setSelectedId(null);
-        if (editorRef.current) {
-          editorRef.current.innerHTML = "<p></p>";
-        }
+        replaceEditorHtml("<p></p>");
         return;
       }
 
@@ -895,8 +930,8 @@ export default function Home() {
                 : c,
             ),
           );
-          if (editorRef.current && currentEditorChapterIdRef.current === targetChapterId) {
-            editorRef.current.innerHTML = fullCh.content || "<p></p>";
+          if (currentEditorChapterIdRef.current === targetChapterId) {
+            replaceEditorHtml(fullCh.content || "<p></p>");
           }
         }
       } catch (err) {
@@ -958,15 +993,13 @@ export default function Home() {
     loadWorkspaceData();
   }, [loadWorkspaceData]);
 
-  // 仅在显式切换章节时同步编辑器 DOM，决不在保存响应到达时重置正在输入的内容
+  // 仅在编辑器初始化或显式切章时装载正文；保存响应不能覆写在途草稿。
   useEffect(() => {
-    if (selectedId && currentEditorChapterIdRef.current !== selectedId) {
-      currentEditorChapterIdRef.current = selectedId;
-      if (editorRef.current && selected) {
-        editorRef.current.innerHTML = selected.content || "<p></p>";
-      }
-    }
-  }, [selectedId, selected]);
+    if (!tiptap || !selectedId) return;
+    currentEditorChapterIdRef.current = selectedId;
+    const chapter = chaptersRef.current.find((item) => item.id === selectedId);
+    replaceEditorHtml(chapter?.content || "<p></p>");
+  }, [tiptap, selectedId]);
 
   // 章节目录分组：支持作品下包含【未分卷】分组展示，按权威真实 sortOrder 严格排序
   const groupedChapters = useMemo(() => {
@@ -994,6 +1027,9 @@ export default function Home() {
 
     return groups;
   }, [volumes, chapters]);
+  const chapterJumpItems = useMemo(() => groupedChapters.flatMap((group) =>
+    group.items.map((chapter) => ({ id: chapter.id, title: chapter.title, volumeTitle: group.title }))
+  ).map((chapter, index) => ({ ...chapter, ordinal: index + 1 })), [groupedChapters]);
 
   // 切换分卷折叠/展开
   function toggleVolumeCollapse(volumeId: string) {
@@ -1756,59 +1792,63 @@ export default function Home() {
   }
 
   // 切换章节（F03：请求代次 Token 隔离迟到响应）
-  async function selectChapter(id: string) {
-    if (id === selectedId) return;
+  async function selectChapter(id: string): Promise<boolean> {
+    if (id === currentEditorChapterIdRef.current) return true;
+    if (chapterJumpBusyRef.current || resolvingConflictRef.current) return false;
+    chapterJumpBusyRef.current = true;
+    setChapterJumpError(null);
+    const sourceWork = activeWorkIdRef.current;
+    const sourceChapter = currentEditorChapterIdRef.current;
+    try {
     // 切换章节前立即刷盘保存当前未完成的草稿，防止静默丢稿
     const ok = await flushPendingSave();
     if (!ok || saveStateRef.current === "conflict" || saveStateRef.current === "error" || saveStateRef.current === "saving") {
-      alert("当前章节有未保存草稿、正在保存中或处于版本冲突状态，已阻止切换章节以防丢稿。请解决后再切换。");
-      return;
+      setChapterJumpError("当前草稿尚未安全保存或存在冲突，已阻止跳转。请先重试保存或处理冲突。");
+      return false;
     }
 
     const chReqToken = ++chapterRequestIdRef.current;
-    setSelectedId(id);
-    currentEditorChapterIdRef.current = id;
-    setConflictChapterId(null);
-    setConflictServerChapter(null);
-
-    loadChapterLinks(id);
-
-    try {
+    const start = { workId: sourceWork, chapterId: sourceChapter, seq: sourceChapter ? draftSeqRef.current[sourceChapter] || 0 : 0 };
       const fullCh = await fetchChapter(id);
-      if (chReqToken !== chapterRequestIdRef.current || currentEditorChapterIdRef.current !== id) {
-        return;
+      if (chReqToken !== chapterRequestIdRef.current || !canCommitChapterJump(start, {
+        workId: activeWorkIdRef.current, chapterId: currentEditorChapterIdRef.current,
+        seq: sourceChapter ? draftSeqRef.current[sourceChapter] || 0 : 0,
+        dirty: !!pendingSaveRef.current || !!activeSavePromiseRef.current || saveStateRef.current !== "saved",
+      })) {
+        setChapterJumpError("加载期间当前稿件或作品发生变化，本次跳转已取消；请保存后重新选择。");
+        return false;
       }
       if (fullCh.revision !== undefined) {
         contentBaseRevisionsRef.current[id] = fullCh.revision;
         catalogRevisionsRef.current[id] = fullCh.revision;
       }
-      setChapters((prev) =>
-        prev.map((c) =>
+      const nextChapters = chaptersRef.current.map((c) =>
           c.id === id
             ? {
                 ...c,
+                title: fullCh.title,
                 content: fullCh.content,
                 revision: fullCh.revision,
                 wordCount: fullCh.wordCount,
                 sortOrder: fullCh.sortOrder !== undefined ? fullCh.sortOrder : c.sortOrder,
               }
             : c,
-        ),
-      );
-      if (editorRef.current && currentEditorChapterIdRef.current === id) {
-        editorRef.current.innerHTML = fullCh.content || "<p></p>";
+        );
+      chaptersRef.current = nextChapters;
+      setChapters(nextChapters);
+      setSelectedId(id);
+      currentEditorChapterIdRef.current = id;
+      setConflictChapterId(null);
+      loadChapterLinks(id);
+      if (sourceWork) {
+        switchActiveWorkspace({ workId: sourceWork, chapterId: id }).catch(() => {});
       }
-      if (activeWorkId) {
-        switchActiveWorkspace({ workId: activeWorkId, chapterId: id }).catch(() => {});
-      }
-    } catch (e) {
-      if (chReqToken !== chapterRequestIdRef.current || currentEditorChapterIdRef.current !== id) {
-        return;
-      }
-      const found = chapters.find((c) => c.id === id);
-      if (found && editorRef.current) {
-        editorRef.current.innerHTML = found.content;
-      }
+      return true;
+    } catch {
+      setChapterJumpError("章节加载失败，当前稿件保持不变。请检查网络后重新跳转。");
+      return false;
+    } finally {
+      chapterJumpBusyRef.current = false;
     }
   }
 
@@ -1869,7 +1909,6 @@ export default function Home() {
       setSelectedId(newCh.id);
       currentEditorChapterIdRef.current = newCh.id;
       setConflictChapterId(null);
-      setConflictServerChapter(null);
       setChapterLinks([]);
 
       // 新建成功后新章与服务端一致，草稿状态重置为 saved
@@ -1885,9 +1924,7 @@ export default function Home() {
         });
       }
 
-      if (editorRef.current) {
-        editorRef.current.innerHTML = formatted.content;
-      }
+      replaceEditorHtml(formatted.content);
     } catch (err: any) {
       console.error("新建章节失败:", err);
       // 关键修复：结构操作异常与正文草稿保存状态彻底解耦，绝不写入正文 saveState
@@ -1927,9 +1964,9 @@ export default function Home() {
 
   // 编辑器正文变动保存（带版本号防冲突与串行队列）
   function handleEditorInput() {
-    const content = editorRef.current?.innerHTML ?? "";
-    const oldWords = plainText(selected?.content || "").length;
-    const newWords = plainText(content).length;
+    const content = readEditorHtml();
+    const oldWords = analyzeChapterText(selected?.content || "").wordCount;
+    const newWords = analyzeChapterText(content).wordCount;
     const diff = newWords - oldWords;
     if (diff > 0) {
       addTodayWords(diff);
@@ -1945,10 +1982,11 @@ export default function Home() {
           : chapter,
       ),
     );
-    setSaveState("saving");
+    if (saveStateRef.current !== "conflict") setSaveState("saving");
 
     pendingSaveRef.current = {
       chapterId: selectedId,
+      saveId: crypto.randomUUID(),
       title: pendingSaveRef.current?.chapterId === selectedId ? pendingSaveRef.current.title : undefined,
       content,
     };
@@ -1958,6 +1996,10 @@ export default function Home() {
       await performSave();
     }, 650);
   }
+
+  useEffect(() => {
+    onEditorUpdateRef.current = handleEditorInput;
+  });
 
   // 章节标题变动保存
   function handleTitleChange(newTitle: string) {
@@ -1969,10 +2011,11 @@ export default function Home() {
         chapter.id === selectedId ? { ...chapter, title: newTitle } : chapter,
       ),
     );
-    setSaveState("saving");
+    if (saveStateRef.current !== "conflict") setSaveState("saving");
 
     pendingSaveRef.current = {
       chapterId: selectedId,
+      saveId: crypto.randomUUID(),
       title: newTitle,
       content: pendingSaveRef.current?.chapterId === selectedId ? pendingSaveRef.current.content : undefined,
     };
@@ -1984,94 +2027,23 @@ export default function Home() {
   }
 
   function format(command: string, value?: string) {
-    editorRef.current?.focus();
-    document.execCommand(command, false, value);
-    handleEditorInput();
+    if (!tiptap) return;
+    switch (command) {
+      case "undo": tiptap.chain().focus().undo().run(); break;
+      case "redo": tiptap.chain().focus().redo().run(); break;
+      case "bold": tiptap.chain().focus().toggleBold().run(); break;
+      case "italic": tiptap.chain().focus().toggleItalic().run(); break;
+      case "insertUnorderedList": tiptap.chain().focus().toggleBulletList().run(); break;
+      case "formatBlock": if (value === "blockquote") tiptap.chain().focus().toggleBlockquote().run(); break;
+    }
   }
 
-  // 引用格式切换：支持对已引用的块回退取消为常规段落
   function toggleBlockquote() {
-    if (!editorRef.current) return;
-    editorRef.current.focus();
-
-    const selection = window.getSelection();
-    if (!selection || selection.rangeCount === 0) {
-      format("formatBlock", "blockquote");
-      return;
-    }
-
-    let node: Node | null = selection.anchorNode;
-    let blockquoteNode: HTMLElement | null = null;
-    while (node && node !== editorRef.current) {
-      if (node.nodeType === Node.ELEMENT_NODE && (node as HTMLElement).tagName.toLowerCase() === "blockquote") {
-        blockquoteNode = node as HTMLElement;
-        break;
-      }
-      node = node.parentNode;
-    }
-
-    if (blockquoteNode) {
-      // 当前已经在 blockquote 中，回退取消为常规段落
-      const executed = document.execCommand("formatBlock", false, "<p>");
-      if (!executed) {
-        document.execCommand("formatBlock", false, "p");
-      }
-      // 容错兜底：若浏览器未解包 blockquote，手动将其内部内容替换为普通段落节点
-      if (blockquoteNode.parentNode && blockquoteNode.tagName.toLowerCase() === "blockquote") {
-        const parent = blockquoteNode.parentNode;
-        const fragment = document.createDocumentFragment();
-        const hasBlockChildren = Array.from(blockquoteNode.children).some((child) =>
-          ["P", "DIV", "H1", "H2", "H3", "H4", "H5", "H6"].includes(child.tagName),
-        );
-        if (hasBlockChildren) {
-          while (blockquoteNode.firstChild) {
-            fragment.appendChild(blockquoteNode.firstChild);
-          }
-        } else {
-          const p = document.createElement("p");
-          while (blockquoteNode.firstChild) {
-            p.appendChild(blockquoteNode.firstChild);
-          }
-          fragment.appendChild(p);
-        }
-        parent.replaceChild(fragment, blockquoteNode);
-      }
-    } else {
-      document.execCommand("formatBlock", false, "blockquote");
-    }
-    handleEditorInput();
+    tiptap?.chain().focus().toggleBlockquote().run();
   }
 
-  // 标题格式切换：已是标题时回退为普通段落
   function toggleHeading(tag: string = "h2") {
-    if (!editorRef.current) return;
-    editorRef.current.focus();
-
-    const selection = window.getSelection();
-    if (!selection || selection.rangeCount === 0) {
-      format("formatBlock", tag);
-      return;
-    }
-
-    let node: Node | null = selection.anchorNode;
-    let headingNode: HTMLElement | null = null;
-    while (node && node !== editorRef.current) {
-      if (node.nodeType === Node.ELEMENT_NODE && (node as HTMLElement).tagName.toLowerCase() === tag.toLowerCase()) {
-        headingNode = node as HTMLElement;
-        break;
-      }
-      node = node.parentNode;
-    }
-
-    if (headingNode) {
-      const executed = document.execCommand("formatBlock", false, "<p>");
-      if (!executed) {
-        document.execCommand("formatBlock", false, "p");
-      }
-    } else {
-      document.execCommand("formatBlock", false, tag);
-    }
-    handleEditorInput();
+    if (tag === "h2") tiptap?.chain().focus().toggleHeading({ level: 2 }).run();
   }
 
   // 历史版本恢复完成回调：用服务端返回的全新 revision 和正文同步状态与编辑器（F02 / R01）
@@ -2098,12 +2070,9 @@ export default function Home() {
           : c,
       ),
     );
-    if (editorRef.current && selectedId === restoredChapter.id) {
-      editorRef.current.innerHTML = restoredChapter.content || "<p></p>";
-    }
+    if (selectedId === restoredChapter.id) replaceEditorHtml(restoredChapter.content || "<p></p>");
     setSaveState("saved");
     setConflictChapterId(null);
-    setConflictServerChapter(null);
 
     if (activeWorkIdRef.current && loadWorkStatsRef.current) {
       loadWorkStatsRef.current(activeWorkIdRef.current);
@@ -2144,9 +2113,7 @@ export default function Home() {
           setSelectedId(null);
           currentEditorChapterIdRef.current = null;
           setChapterLinks([]);
-          if (editorRef.current) {
-            editorRef.current.innerHTML = "<p></p>";
-          }
+          replaceEditorHtml("<p></p>");
         }
       }
     } catch (err: unknown) {
@@ -2181,84 +2148,26 @@ export default function Home() {
     }
   }
 
-  // 历史版本回滚恢复（必须先刷新未保存草稿，带 expectedRevision 与显式冲突处理，同步基线）
-  async function handleRestoreContent(restoredText: string) {
-    if (!selectedId) return;
-    // 恢复前先完成待保存草稿保存，防止防抖草稿被粗暴清空丢失
-    const ok = await flushPendingSave();
-    if (!ok || saveStateRef.current === "conflict" || saveStateRef.current === "error" || saveStateRef.current === "saving") {
-      alert("当前草稿存在未决保存、正在保存或处于版本冲突，已阻止历史版本恢复以防丢稿。");
-      return;
-    }
-
-    const html = restoredText
-      .split("\n")
-      .filter(Boolean)
-      .map((p) => `<p>${p}</p>`)
-      .join("");
-
-    setChapters((prev) =>
-      prev.map((c) => (c.id === selectedId ? { ...c, content: html } : c)),
-    );
-    if (editorRef.current) {
-      editorRef.current.innerHTML = html;
-    }
-
-    setSaveState("saving");
-    try {
-      const currentCh = chaptersRef.current.find((c) => c.id === selectedId);
-      const updated = await saveChapter(selectedId, {
-        content: html,
-        expectedRevision: currentCh?.revision,
-      });
-      contentBaseRevisionsRef.current[selectedId] = updated.revision;
-      catalogRevisionsRef.current[selectedId] = updated.revision;
-      draftSeqRef.current[selectedId] = (draftSeqRef.current[selectedId] || 0) + 1;
-      setChapters((prev) =>
-        prev.map((c) =>
-          c.id === selectedId
-            ? { ...c, revision: updated.revision, wordCount: updated.wordCount }
-            : c,
-        ),
-      );
-      setSaveState("saved");
-      setConflictChapterId(null);
-      setConflictServerChapter(null);
-
-      if (activeWorkIdRef.current && loadWorkStatsRef.current) {
-        loadWorkStatsRef.current(activeWorkIdRef.current);
-      }
-    } catch (err: unknown) {
-      if (err instanceof ChapterConflictError || (err as any)?.status === 409) {
-        console.warn("恢复历史版本时发生版本冲突 (409):", err);
-        setSaveState("conflict");
-        setConflictChapterId(selectedId);
-        try {
-          const latest = await fetchChapter(selectedId);
-          catalogRevisionsRef.current[selectedId] = latest.revision;
-          setConflictServerChapter({
-            title: latest.title,
-            content: latest.content,
-            revision: latest.revision,
-          });
-        } catch {}
-      } else {
-        console.error("恢复历史版本失败:", err);
-        setSaveState("error");
-      }
-    }
-  }
-
   // 冲突解决：拉取服务器最新版本覆盖本地（R01: 同步基线与观察版本）
   async function handlePullServerVersion() {
-    if (!selectedId) return;
+    if (!selectedId || resolvingConflictRef.current) return;
+    resolvingConflictRef.current = true;
+    setIsResolvingConflict(true);
+    const seq = draftSeqRef.current[selectedId] || 0;
     try {
       const latest = await fetchChapter(selectedId);
+      if ((draftSeqRef.current[selectedId] || 0) !== seq) {
+        setChapterJumpError("拉取期间你继续编辑了草稿，已取消覆盖。请复制最新草稿后重新选择。");
+        return;
+      }
       contentBaseRevisionsRef.current[selectedId] = latest.revision;
       catalogRevisionsRef.current[selectedId] = latest.revision;
       draftSeqRef.current[selectedId] = (draftSeqRef.current[selectedId] || 0) + 1;
       if (pendingSaveRef.current?.chapterId === selectedId) {
         pendingSaveRef.current = null;
+      }
+      if (uncertainOverwriteRef.current?.chapterId === selectedId) {
+        uncertainOverwriteRef.current = null;
       }
       setChapters((prev) =>
         prev.map((c) =>
@@ -2273,42 +2182,58 @@ export default function Home() {
             : c,
         ),
       );
-      if (editorRef.current) {
-        editorRef.current.innerHTML = latest.content || "<p></p>";
-      }
+      replaceEditorHtml(latest.content || "<p></p>");
       setSaveState("saved");
       setConflictChapterId(null);
-      setConflictServerChapter(null);
     } catch (err) {
       console.error("拉取服务器版本失败:", err);
+      setChapterJumpError("拉取服务端版本失败，草稿仍保留在当前窗口，请检查网络后重试。");
+    } finally {
+      resolvingConflictRef.current = false;
+      setIsResolvingConflict(false);
     }
   }
 
   // 冲突解决：以当前草稿强制覆盖服务端版本（R01: 推进基线与观察版本）
   async function handleForceOverwrite() {
-    if (!selectedId) return;
+    if (!selectedId || resolvingConflictRef.current) return;
+    resolvingConflictRef.current = true;
+    setIsResolvingConflict(true);
     try {
-      setSaveState("saving");
-      // 获取当前服务器最新的 revision，以此作为 expectedRevision 覆盖保存当前草稿
-      const latest = await fetchChapter(selectedId);
       const pending = pendingSaveRef.current;
       const currentContent =
         pending?.chapterId === selectedId && pending.content !== undefined
           ? pending.content
-          : (editorRef.current?.innerHTML ?? selected.content);
+          : (readEditorHtml() || selected.content);
       const currentTitle =
         pending?.chapterId === selectedId && pending.title !== undefined
           ? pending.title
           : selected.title;
-      const updated = await saveChapter(selectedId, {
+      const seq = draftSeqRef.current[selectedId] || 0;
+      // An unknown response must be checked with the exact original request.
+      // Fetching a fresh revision and issuing a new save would duplicate a
+      // committed overwrite and its pre-overwrite snapshot.
+      const attempt = await prepareOverwriteAttempt(uncertainOverwriteRef.current, {
+        chapterId: selectedId,
         title: currentTitle,
         content: currentContent,
-        expectedRevision: latest.revision,
+        draftSeq: seq,
+      }, async () => (await fetchChapter(selectedId)).revision, () => crypto.randomUUID());
+      uncertainOverwriteRef.current = attempt;
+      const updated = await saveChapter(selectedId, {
+        title: attempt.title,
+        content: attempt.content,
+        expectedRevision: attempt.expectedRevision,
+        saveId: attempt.saveId,
+        preservePreviousVersion: true,
       });
+      uncertainOverwriteRef.current = null;
+      const hasNewerInput = (draftSeqRef.current[selectedId] || 0) !== seq;
+      originalVersionPreservedRef.current.add(selectedId);
       contentBaseRevisionsRef.current[selectedId] = updated.revision;
       catalogRevisionsRef.current[selectedId] = updated.revision;
       draftSeqRef.current[selectedId] = (draftSeqRef.current[selectedId] || 0) + 1;
-      if (pendingSaveRef.current?.chapterId === selectedId) {
+      if (!hasNewerInput && pendingSaveRef.current?.chapterId === selectedId) {
         pendingSaveRef.current = null;
       }
       setChapters((prev) =>
@@ -2316,8 +2241,8 @@ export default function Home() {
           c.id === selectedId
             ? {
                 ...c,
-                title: updated.title,
-                content: updated.content,
+                title: hasNewerInput ? c.title : updated.title,
+                content: hasNewerInput ? c.content : updated.content,
                 revision: updated.revision,
                 wordCount: updated.wordCount,
               }
@@ -2326,28 +2251,49 @@ export default function Home() {
       );
       setSaveState("saved");
       setConflictChapterId(null);
-      setConflictServerChapter(null);
 
       if (activeWorkIdRef.current && loadWorkStatsRef.current) {
         loadWorkStatsRef.current(activeWorkIdRef.current);
       }
     } catch (err) {
       console.error("强制覆盖保存失败:", err);
-      setSaveState("error");
+      if (err instanceof ChapterConflictError) uncertainOverwriteRef.current = null;
+      setSaveState("conflict");
+      setChapterJumpError("覆盖未确认成功，冲突保护仍开启。请检查网络并核对服务端版本后重试。");
+    } finally {
+      resolvingConflictRef.current = false;
+      setIsResolvingConflict(false);
+      if (saveStateRef.current === "saved" && pendingSaveRef.current) void performSave();
     }
   }
 
   // 冲突解决：安全复制草稿至剪贴板
-  function handleCopyDraft() {
+  async function handleCopyDraft() {
+    setCopiedToast(null);
     const pending = pendingSaveRef.current;
     const rawContent =
       pending?.chapterId === selectedId && pending.content !== undefined
         ? pending.content
-        : (editorRef.current?.innerHTML ?? selected.content);
-    const textToCopy = plainText(rawContent);
-    navigator.clipboard.writeText(textToCopy);
-    setCopiedToast(true);
-    setTimeout(() => setCopiedToast(false), 2000);
+        : (readEditorHtml() || selected.content);
+    const editor = tiptapRef.current;
+    const textToCopy = editor && !editor.isDestroyed
+      ? editor.getText({ blockSeparator: "\n\n" }) : plainChapterText(rawContent);
+    if (await copyEditorText(textToCopy, navigator.clipboard)) {
+      setCopiedToast("draft");
+      setTimeout(() => setCopiedToast(null), 2000);
+    } else {
+      setChapterJumpError("复制草稿失败，请在编辑器中手动选中并复制；确认保存副本前不要拉取服务端版本。");
+    }
+  }
+
+  async function handleCopyAiResult() {
+    setCopiedToast(null);
+    if (await copyEditorText(aiResult, navigator.clipboard)) {
+      setCopiedToast("ai");
+      setTimeout(() => setCopiedToast(null), 2000);
+    } else {
+      setChapterJumpError("复制建议失败，请手动选中建议文本并复制。");
+    }
   }
 
   // Q02 Boundary ④: 显式重新同步目录入口（固定作品 ID 与请求代次，迟到响应不得污染切换后的作品）
@@ -2400,7 +2346,7 @@ export default function Home() {
     if (!activeWorkId || !selected) return;
     try {
       const rawTitle = selected.title.replace(/【已在服务端删除】/g, "").trim() || "未命名章节";
-      const currentContent = editorRef.current?.innerHTML ?? selected.content;
+      const currentContent = readEditorHtml() || selected.content;
       const newCh = await createChapter(activeWorkId, {
         title: rawTitle,
         volumeId: selected.volumeId || null,
@@ -2432,7 +2378,6 @@ export default function Home() {
       currentEditorChapterIdRef.current = newCh.id;
       setSaveState("saved");
       setConflictChapterId(null);
-      setConflictServerChapter(null);
       alert(`草稿已成功恢复并保存为新章节《${newCh.title}》！`);
     } catch (err: any) {
       alert(`恢复为新章节失败: ${err?.message || "网络异常"}`);
@@ -2465,17 +2410,7 @@ export default function Home() {
   }
 
   function handlePaperClick(e: React.MouseEvent<HTMLElement>) {
-    if (e.target === e.currentTarget && editorRef.current) {
-      editorRef.current.focus();
-      const selection = window.getSelection();
-      if (selection) {
-        const range = document.createRange();
-        range.selectNodeContents(editorRef.current);
-        range.collapse(false);
-        selection.removeAllRanges();
-        selection.addRange(range);
-      }
-    }
+    if (e.target === e.currentTarget) tiptap?.chain().focus("end").run();
   }
 
   // 真实 AI 流式接口；正文与设定仅按用户勾选的范围发送。
@@ -2485,11 +2420,9 @@ export default function Home() {
       setAiError("请先填写具体创作指令");
       return;
     }
-    const selection = window.getSelection();
-    const editor = editorRef.current;
-    const selectedText = editor && selection?.anchorNode && selection.focusNode
-      && editor.contains(selection.anchorNode) && editor.contains(selection.focusNode)
-      ? selection.toString().trim() : "";
+    const selection = tiptap?.state.selection;
+    const selectedText = tiptap && selection && !selection.empty
+      ? tiptap.state.doc.textBetween(selection.from, selection.to, "\n").trim() : "";
     const input: AiGenerationInput = {
       action, instruction: aiPrompt, selectedText,
       context: aiContextPayload, temperature: 0.7, maxTokens: 2000,
@@ -2550,6 +2483,21 @@ export default function Home() {
 
   return (
     <main className="app-shell">
+      <EditorDiagnostics />
+      {isChapterJumpOpen && <ChapterJumpDialog key={activeWorkId} open={isChapterJumpOpen} onOpenChange={setIsChapterJumpOpen}
+        selectedId={selectedId} onJump={selectChapter} items={chapterJumpItems} />}
+      <Dialog open={conflictAction !== null} onOpenChange={(open) => { if (!open) setConflictAction(null); }}>
+        <DialogContent><DialogHeader><DialogTitle>{conflictAction === "pull" ? "确认拉取服务端版本" : "确认覆盖服务端正文"}</DialogTitle>
+          <DialogDescription>{conflictAction === "pull"
+            ? "此操作会替换本窗口未保存的草稿。请先取消并复制草稿，确认已保留需要的内容后再继续。"
+            : "将用本窗口草稿覆盖服务端正文，覆盖前会保留服务端旧稿的历史快照。其他窗口的未保存内容不会自动合并。"}</DialogDescription>
+        </DialogHeader><DialogFooter>
+          <Button variant="outline" onClick={() => setConflictAction(null)}>取消</Button>
+          <Button onClick={() => { const action = conflictAction; setConflictAction(null); setChapterJumpError(null);
+            if (action === "pull") void handlePullServerVersion(); else if (action === "overwrite") void handleForceOverwrite();
+          }}>确认{conflictAction === "pull" ? "拉取" : "覆盖"}</Button>
+        </DialogFooter></DialogContent>
+      </Dialog>
       <header className="topbar">
         <div className="brand-block">
           <div className="brand-mark" aria-hidden="true">墨</div>
@@ -2653,7 +2601,7 @@ export default function Home() {
         </div>
       </header>
 
-      <div className={`workspace ${activeView === "writing" ? "is-writing" : "is-full-view"}`}>
+      <div className={`workspace ${activeView === "writing" ? "is-writing" : "is-full-view"} ${isFocusMode && activeView === "writing" ? "is-focused" : ""} ${isInspectorCollapsed ? "inspector-hidden" : ""}`}>
         <aside className="tool-rail shrink-0" aria-label="作品工具">
           <button
             className={activeView === "writing" ? "rail-item is-active" : "rail-item"}
@@ -2750,7 +2698,7 @@ export default function Home() {
                     >
                       <FolderPlus className="w-4 h-4 text-[#54625a]" />
                     </Button>
-                    <Button variant="ghost" size="icon-sm" aria-label="搜索章节"><Search className="w-4 h-4 text-[#54625a]" /></Button>
+                    <Button variant="ghost" size="icon-sm" aria-label="搜索章节" onClick={() => setIsChapterJumpOpen(true)}><Search className="w-4 h-4 text-[#54625a]" /></Button>
                   </div>
                 </div>
 
@@ -2891,7 +2839,7 @@ export default function Home() {
                                 </div>
                               ) : (
                                 group.items.map((chapter, groupIndex) => {
-                                  const number = chapters.findIndex((c) => c.id === chapter.id) + 1;
+                                  const number = chapterJumpItems.find((item) => item.id === chapter.id)?.ordinal ?? 0;
                                   const isDone = chapter.status === "completed" || chapter.status === "done";
                                   const isFirstInGroup = groupIndex === 0;
                                   const isLastInGroup = groupIndex === group.items.length - 1;
@@ -2917,7 +2865,7 @@ export default function Home() {
                                       >
                                         <span className="chapter-number">{String(number).padStart(2, "0")}</span>
                                         <span className="chapter-copy">
-                                          <strong>{chapter.title.replace(/^第.+章\s*/, "")}</strong>
+                                          <strong>{chapter.title.replace(/^第[零一二三四五六七八九十百千万\d]+章\s*/, "")}</strong>
                                           <small>{getChapterWordCount(chapter)} 字 · {isDone ? "已完成" : "草稿"}</small>
                                         </span>
                                         {isDone && <Check className="chapter-check" size={14} />}
@@ -3095,10 +3043,22 @@ export default function Home() {
                         trigger={<Button variant="ghost" size="sm"><FileDown /> 导出</Button>}
                       />
                       <div className="ml-auto flex items-center gap-1">
+                        <Button type="button" variant="ghost" size="sm" onClick={() => setIsChapterJumpOpen(true)} title="跳转章节（Ctrl/Cmd+J）">
+                          <BookOpen /> 跳转章节
+                        </Button>
+                        <Button type="button" variant="ghost" size="sm" aria-expanded={isFindOpen}
+                          onClick={() => setIsFindOpen((open) => !open)} title="查找替换（Ctrl/Cmd+F）">
+                          <Search /> 查找替换
+                        </Button>
+                        <Button type="button" variant="ghost" size="sm" aria-pressed={isFocusMode}
+                          onClick={() => setIsFocusMode((focused) => !focused)} title="专注时按 Esc 退出">
+                          <Focus /> {isFocusMode ? "退出专注" : "专注写作"}
+                        </Button>
                         <Button
                           type="button"
                           variant="ghost"
                           size="icon-sm"
+                          disabled={isFocusMode}
                           onClick={() => setIsInspectorCollapsed((prev) => !prev)}
                           title={isInspectorCollapsed ? "展开右侧面板" : "折叠右侧面板"}
                           aria-label={isInspectorCollapsed ? "展开右侧面板" : "折叠右侧面板"}
@@ -3113,9 +3073,18 @@ export default function Home() {
                       </div>
                     </div>
 
+                    {isFindOpen && tiptap && !tiptap.isDestroyed && (
+                      <EditorSearch key={selected.id} editor={tiptap} onClose={() => {
+                        setIsFindOpen(false); tiptap.commands.focus();
+                      }} />
+                    )}
+
                     {/* 冲突提示 Banner */}
+                    {chapterJumpError && <div role="alert" className="px-4 py-2 text-sm text-amber-900 bg-amber-50 flex items-center gap-2">
+                      <span className="flex-1">{chapterJumpError}</span><button type="button" aria-label="关闭跳转提示" onClick={() => setChapterJumpError(null)}><X size={16} /></button>
+                    </div>}
                     {saveState === "conflict" && conflictChapterId === selectedId && (
-                      <div className="mx-6 mt-4 p-4 rounded-2xl bg-[#fff8f0] border-2 border-amber-500/40 shadow-md text-xs text-[#523e1b] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 animate-fadeIn">
+                      <div className="mx-6 mt-4 p-4 rounded-2xl bg-[#fff8f0] border-2 border-amber-500/40 shadow-md text-xs text-[#523e1b] flex flex-col gap-3 animate-fadeIn">
                         <div className="flex items-start gap-2.5">
                           <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
                           <div>
@@ -3136,7 +3105,7 @@ export default function Home() {
                             </p>
                           </div>
                         </div>
-                        <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                        <div className="flex flex-wrap items-center justify-end gap-2">
                           <Button
                             type="button"
                             variant="outline"
@@ -3145,7 +3114,7 @@ export default function Home() {
                             className="h-8 text-xs border-amber-300 hover:bg-amber-50 text-amber-900 cursor-pointer"
                           >
                             <Copy className="w-3.5 h-3.5 mr-1" />
-                            复制草稿
+                            {copiedToast === "draft" ? "已复制草稿" : "复制草稿"}
                           </Button>
                           {selected?.title.includes("【已在服务端删除】") ? (
                             <Button
@@ -3163,7 +3132,8 @@ export default function Home() {
                                 type="button"
                                 variant="outline"
                                 size="sm"
-                                onClick={handlePullServerVersion}
+                                onClick={() => setConflictAction("pull")}
+                                disabled={isResolvingConflict}
                                 className="h-8 text-xs border-amber-300 hover:bg-amber-50 text-amber-900 cursor-pointer"
                               >
                                 <RotateCcw className="w-3.5 h-3.5 mr-1" />
@@ -3172,7 +3142,8 @@ export default function Home() {
                               <Button
                                 type="button"
                                 size="sm"
-                                onClick={handleForceOverwrite}
+                                onClick={() => setConflictAction("overwrite")}
+                                disabled={isResolvingConflict}
                                 className="h-8 text-xs bg-amber-700 hover:bg-amber-800 text-white cursor-pointer"
                               >
                                 强制覆盖保存
@@ -3203,14 +3174,7 @@ export default function Home() {
                           <span>·</span>
                           <span>{chapterWords} 字</span>
                         </div>
-                        <div
-                          ref={editorRef}
-                          className="rich-editor"
-                          contentEditable
-                          suppressContentEditableWarning
-                          onInput={handleEditorInput}
-                          aria-label="章节正文编辑器"
-                        />
+                        <EditorContent editor={tiptap} />
                       </article>
                     </div>
 
@@ -3263,7 +3227,7 @@ export default function Home() {
                         ) : saveState === "error" ? (
                           <div className="flex items-center gap-1.5 text-rose-700">
                             <AlertTriangle size={12} className="shrink-0" />
-                            <span>保存失败（草稿已保留）</span>
+                            <span>保存失败（草稿仅在当前窗口，请勿关闭）</span>
                             <button
                               type="button"
                               onClick={(e) => {
@@ -3323,7 +3287,7 @@ export default function Home() {
 
               {/* 上下文参考范围（用户可勾选控制） */}
               <div className="p-3 rounded-2xl bg-[#faf9f5] border border-[#e4e2da] space-y-2">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="text-xs font-serif font-bold text-[#202b25] flex items-center gap-1">
                     <BookOpen size={13} className="text-[#176b5b]" />
                     <span>选择参考上下文</span>
@@ -3461,7 +3425,7 @@ export default function Home() {
                       <Sparkles size={14} className="text-[#176b5b]" />
                       <span>AI 建议片段（{isAiGeneratingHere ? "生成中" : aiComplete ? "预览" : "未完成"}）</span>
                     </div>
-                    {copiedToast && (
+                    {copiedToast === "ai" && (
                       <span className="text-[10px] text-emerald-800 bg-emerald-100 px-1.5 py-0.2 rounded font-mono">
                         已复制
                       </span>
@@ -3476,11 +3440,7 @@ export default function Home() {
                     <div className="flex items-center gap-1.5">
                       <button
                         type="button"
-                        onClick={() => {
-                          navigator.clipboard.writeText(aiResult);
-                          setCopiedToast(true);
-                          setTimeout(() => setCopiedToast(false), 2000);
-                        }}
+                        onClick={handleCopyAiResult}
                         className="px-2 py-1 rounded-md text-[11px] text-[#55635b] hover:bg-[#eae8e0] cursor-pointer flex items-center gap-1 transition-colors"
                         title="复制建议文本"
                       >
@@ -3510,17 +3470,16 @@ export default function Home() {
                       size="sm"
                       disabled={!aiComplete || isAiGeneratingHere}
                       onClick={() => {
-                        if (!editorRef.current) return;
-                        // 模型输出视作纯文本，禁止作为 HTML 注入编辑器。
-                        for (const paragraph of aiResult.split(/\n\n+/).filter(Boolean)) {
-                          const node = document.createElement("p");
-                          paragraph.split("\n").forEach((line, index) => {
-                            if (index) node.appendChild(document.createElement("br"));
-                            node.appendChild(document.createTextNode(line));
-                          });
-                          editorRef.current.appendChild(node);
-                        }
-                        handleEditorInput();
+                        if (!tiptap) return;
+                        // 模型输出构造成纯文本节点，不把 AI 文本作为 HTML 解析。
+                        const paragraphs = aiResult.split(/\n\n+/).filter(Boolean).map((paragraph) => ({
+                          type: "paragraph",
+                          content: paragraph.split("\n").flatMap((line, index) => [
+                            ...(index > 0 ? [{ type: "hardBreak" }] : []),
+                            ...(line ? [{ type: "text", text: line }] : []),
+                          ]),
+                        }));
+                        tiptap.chain().focus("end").insertContent(paragraphs).run();
                         setAiResult("");
                         setAiComplete(false);
                       }}

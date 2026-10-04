@@ -21,4 +21,4 @@ export function chapterWriteGuard(
 // The response belongs to this write, even if another write/archive happens
 // before the request finishes. Do not perform a second mutable-row read.
 export const chapterReturningColumns = `id, work_id, volume_id, title, summary,
-  content, plain_text, word_count, status, sort_order, revision, created_at, updated_at`;
+  content, plain_text, word_count, status, sort_order, revision, content_format_version, created_at, updated_at`;

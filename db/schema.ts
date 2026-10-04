@@ -67,6 +67,8 @@ export const chapters = sqliteTable(
     sortOrder: integer("sort_order").notNull().default(0),
     revision: integer("revision").notNull().default(1),
     lastSaveId: text("last_save_id"),
+    clientSaveId: text("client_save_id"),
+    contentFormatVersion: integer("content_format_version").notNull().default(1),
     deletedAt: text("deleted_at"),
     ...timestamps,
   },
@@ -326,4 +328,22 @@ export const workspacePreferences = sqliteTable(
     ...timestamps,
   },
   (table) => [index("idx_workspace_active_work").on(table.activeWorkId)],
+);
+
+export const backupImportJobs = sqliteTable(
+  "backup_import_jobs",
+  {
+    id: text("id").primaryKey(),
+    ownerId: text("owner_id").notNull(),
+    snapshotHash: text("snapshot_hash").notNull(),
+    status: text("status").notNull(),
+    importedWorkIdsJson: text("imported_work_ids_json").notNull().default("[]"),
+    sourceExportedAt: text("source_exported_at").notNull(),
+    completedAt: text("completed_at"),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("uq_backup_import_owner_snapshot").on(table.ownerId, table.snapshotHash),
+    index("idx_backup_import_owner_created").on(table.ownerId, table.createdAt),
+  ],
 );

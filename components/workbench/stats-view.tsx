@@ -4,14 +4,12 @@ import { useEffect, useState } from "react";
 import {
   CalendarDays,
   CheckCircle,
-  Clock,
   Edit2,
   Feather,
   Flame,
   LineChart as ChartIcon,
   Loader2,
   RefreshCw,
-  Sparkles,
   Target,
   Trophy,
 } from "lucide-react";
@@ -103,8 +101,6 @@ export function StatsView({
     : hasTargetRecord && targetWords > 0
     ? Math.min(100, Math.round((stats.todayWordsWritten / targetWords) * 100))
     : 0;
-
-  const isGoalReached = hasTargetRecord && !isUnlimitedGoal && targetWords > 0 && stats.todayWordsWritten >= targetWords;
 
   // 保存今日写作目标
   const handleSaveGoal = async () => {

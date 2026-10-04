@@ -1,7 +1,7 @@
 "use client";
 
-import Link from "next/link";
-import { ArrowLeft, Feather } from "lucide-react";
+import { DocumentLink as Link } from "@/components/navigation/document-link";
+import { ArrowLeft } from "lucide-react";
 
 import { ProfileView } from "@/components/profile/profile-view";
 
@@ -34,7 +34,7 @@ export default function ProfilePage() {
 
       {/* 底部信息 */}
       <footer className="max-w-5xl w-full mx-auto text-center py-2 text-[11px] text-[#9ba29d]">
-        <p>© 智能作者创作平台 · 专为网络文学创作者定制 · 离线保全与自主可控</p>
+        <p>© 智能作者创作平台 · 专为网络文学创作者定制 · 本地优先与自主可控</p>
       </footer>
     </main>
   );

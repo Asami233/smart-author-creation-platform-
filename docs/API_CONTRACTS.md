@@ -71,9 +71,17 @@
 {
   "title": "第一章 雨夜来客",
   "content": "<p>正文 HTML</p>",
-  "expectedRevision": 3
+  "expectedRevision": 3,
+  "saveId": "2c4ed99a-1b87-465e-80ea-c63ef7ceef06",
+  "preservePreviousVersion": true
 }
 ```
+
+`saveId` 为可选的客户端 UUID。一次草稿提交及其网络失败重试必须复用同一 ID、相同字段和原 `expectedRevision`；用户继续输入后应生成新 ID。若首次写入已成功而响应丢失，服务器只在该 ID 仍是章节**最新一次保存**、提交字段完全匹配且当前修订号等于 `expectedRevision + 1` 时返回现有章节，不再增加修订、历史快照或今日写作统计。同一 ID 携带不同正文返回 `409 CONFLICT`；已有更新覆盖这次保存时，按普通修订冲突处理，前端不得静默覆盖草稿。不携带 `saveId` 的旧客户端仍可保存，但无法获得重试幂等保证。
+
+`preservePreviousVersion` 为可选布尔值，仅随正文确实变化的成功保存生效：为 `true` 时，即使未达到常规自动快照的时间/字数阈值，也先保存当前服务器原稿到章节历史版本，再写入新正文。工作台迁入 TipTap 后，每章在当前浏览器会话的第一次正文保存使用该标记，避免旧 HTML 被规范化后原稿无处恢复；章节标题等非正文改动不会创建快照。该标记不改变正文格式版本，也不绕过 `expectedRevision`。旧客户端不传时维持原自动快照规则。
+
+章节响应增加 `contentFormatVersion: 1`。版本 1 代表当前 HTML 正文格式；已有章节经数据库迁移默认标记为 1，旧版备份缺少该字段时也按 1 解析。未知格式版本不自动当作 HTML 导入。此字段是未来编辑器格式迁移的兼容标记，不表示已经完成 TipTap 替换。
 
 章节排序 / 跨卷移动：`POST /api/works/:workId/chapters/reorder`。
 
@@ -275,8 +283,32 @@ data: {"type":"error","code":"AI_STREAM_INTERRUPTED","message":"模型流式响�
 
 ## 数据安全
 
-完整契约见 [`DATA_SAFETY_API.md`](./DATA_SAFETY_API.md)。包含完整备份、备份验证与导入、存储摘要、回收站和恢复接口。
+完整契约见 [`DATA_SAFETY_API.md`](./DATA_SAFETY_API.md)。包含完整备份、备份验证、恢复预检、可控导入、存储摘要、回收站和恢复接口。
+
+备份恢复采用两步协议：先把原始 `BackupDocument` 提交给 `POST /api/backup/preflight`，展示摘要与同名冲突；再把 `{backup,previewToken,mode:"merge-copy",confirm:true}` 提交给同源写接口 `POST /api/backup/import`。签名凭据有效期 30 分钟并绑定账号及备份内容。导入永远创建独立副本，不覆盖现有作品；相同备份重复提交幂等返回上次结果。旧版直接向导入接口提交原始备份会返回 `428 BACKUP_PREFLIGHT_REQUIRED`。
+
+### 本机访客作品认领（迭代 4，首个工作包）
+
+仅 `localhost` / `127.0.0.1` / `[::1]` 开放，三个接口均要求已登录邮箱账号。其他部署环境返回 `403 GUEST_CLAIM_LOCAL_ONLY`；未登录返回 `401 UNAUTHENTICATED`。这仍是单机单作者信任模型：同一台机器上的其他已登录账号也能在明确下载备份后发起认领，不应把本机服务开放给不受信任的其他用户。
+
+- `GET /api/guest-claim/preview`：只读。响应 `{data:{localOnly:true,works:[{id,title,status,chapterCount,totalWords,updatedAt}],previewToken,accountEmail}}`，无访客作品时 `previewToken:null`。只暴露摘要，不包含正文或 API Key。
+- `GET /api/guest-claim/backup`：下载当前 `local-author` 的完整 JSON 备份；无访客作品返回 `404 NO_GUEST_WORKS`。备份包含作品正文、设定和版本，**不含 AI API Key**；`Cache-Control:no-store`，并签发限定当前账号、作品集合和备份快照的一小时 HttpOnly、SameSite=Strict 凭据。备份文件应由用户自行安全保存，不要上传到不可信站点。
+- `POST /api/guest-claim`：同源写请求，请求体 `{workIds:string[],previewToken:string,confirm:true}`，必须与上一步备份绑定的快照及全部访客作品 ID 一致。成功响应 `{data:{claimedWorkIds:string[],alreadyClaimed:boolean,remainingGuestWorkCount:number}}`。重复提交同一张有效备份凭据返回 `alreadyClaimed:true`，不复制作品。缺少/过期/其他账号的凭据返回 `412 GUEST_BACKUP_REQUIRED`；数据变化返回 `409 GUEST_CLAIM_STALE`，需重新预览与下载；跨站请求返回 `403 CROSS_SITE_REQUEST`。
+
+认领以单条数据库语句原地更换全部访客作品的 `owner_id`，不更换作品、卷章、设定、历史版本和统计的 ID，不复制或删除正文。原本访客身份随后将不再能访问已认领作品；已打开的其他访客标签页必须先保存并关闭。账号原有作品保留，访客 AI 密钥和本机当前作品偏好不迁移。此接口不执行账号注销、远端迁移或数据清理。
+
+### 账号数据导出
+
+`GET /api/account/export` 要求有效邮箱账号会话，返回下载文件 `smart-author-account-YYYY-MM-DD.json`，格式为 `smart-author-account-export`、`schemaVersion:1`。文件包含公开账号资料和该账号的正式 `BackupDocument`（作品、卷章、设定、版本、统计及不含密钥的 AI 配置摘要）。`excludedSensitiveData` 固定列明未导出的密码、会话、验证码和 AI API Key。响应使用 `Cache-Control:no-store`；该文件含完整正文，用户应安全保存。它不是 `/api/backup/import` 的直接输入，恢复作品时应使用其中的 `content` 节点；账号身份仍须重新注册或由未来的恢复流程验证。
+
+### 账号永久删除
+
+`DELETE /api/account` 要求有效邮箱账号会话和同源请求。请求体为 `{currentPassword:string,confirmation:"永久删除我的账号"}`；页面还要求勾选“删除后无法恢复”的确认项。当前密码错误返回 `401 INVALID_CURRENT_PASSWORD`，短语不一致返回 `400 VALIDATION_ERROR`，跨站请求返回 `403 CROSS_SITE_REQUEST`。成功响应 `{data:{deleted:true}}` 并立即清除会话 Cookie。
+
+删除没有冷静期或撤销窗口。一次事务删除该账号的作品及其卷章、设定、版本、统计，工作台偏好、AI 配置与用量、验证码、密码凭据、全部会话和账号资料；不会删除 `local-author` 访客作品或其他账号数据。服务端不会在删除时自动生成备份，用户应先调用账号数据导出。API 不记录密码、正文或密钥到日志。
 
 ## 健康检查
 
 `GET /api/health` 返回服务状态，不访问数据库。
+
+`GET /api/health/auth-email` 返回认证邮件就绪状态，不发送邮件、不访问数据库，也不暴露密钥或完整发件地址。本地且完全未配置邮件服务时返回 200、`mode:"development"`、`devCodeEnabled:true`；Resend 配置完整且发件地址有效时返回 200、`mode:"email"`；公开环境未配置、只配置一半或发件地址无效时返回 503，并在 `issues` 中给出稳定错误代码。生产部署必须以 `ready:true`、`mode:"email"`、`devCodeEnabled:false` 为放行条件。

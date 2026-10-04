@@ -58,9 +58,11 @@ export const updateChapterSchema = z
     status: z.enum(["draft", "completed"]).optional(),
     sortOrder: z.number().int().min(0).optional(),
     expectedRevision: z.number().int().min(1).optional(),
+    saveId: idSchema.optional(),
+    preservePreviousVersion: z.boolean().optional(),
   })
   .refine(
-    (value) => Object.keys(value).some((key) => key !== "expectedRevision"),
+    (value) => Object.keys(value).some((key) => key !== "expectedRevision" && key !== "saveId" && key !== "preservePreviousVersion"),
     "至少提供一个要修改的字段",
   );
 

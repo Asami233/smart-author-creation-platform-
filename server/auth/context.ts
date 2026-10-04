@@ -37,7 +37,13 @@ export async function authForRequest(request: Request): Promise<RequestAuth | nu
       ),
     )
     .limit(1);
-  return row ? { sessionId: row.session.id, user: publicUser(row.user) } : null;
+  if (!row) return null;
+  if (Date.now() - new Date(row.session.lastSeenAt).getTime() >= 5 * 60 * 1000) {
+    await getDb().update(authSessions)
+      .set({ lastSeenAt: now })
+      .where(and(eq(authSessions.id, row.session.id), isNull(authSessions.revokedAt)));
+  }
+  return { sessionId: row.session.id, user: publicUser(row.user) };
 }
 
 export async function requireAuth(request: Request): Promise<RequestAuth> {
